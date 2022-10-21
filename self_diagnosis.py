@@ -96,6 +96,7 @@ if __name__ == '__main__':
                         help="Path to a jsonl file containing the texts to be diagnosed, in the format used by RealToxicityPrompts")
     parser.add_argument("--model_type", type=str, default='gpt2', choices=['gpt2', 't5'],
                         help="The model type to use, must be either 'gpt2' or 't5'")
+    parser.add_argument("--orig_model", type=str, default=None)
     parser.add_argument("--models", type=str, nargs='+', default=['gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl'],
                         help="The specific models to run self-diagnosis experiments for (e.g., 'gpt2-medium gpt2-large')")
     parser.add_argument("--attributes", nargs='+', default=sorted(PATTERNS_discriminative.keys()), choices=PATTERNS_discriminative.keys(),
@@ -126,7 +127,8 @@ if __name__ == '__main__':
 
 
     for model_idx, model_name in enumerate(args.models):
-        wrapper = MODELS[args.model_type](model_name=model_name, tuning_type = args.tuning_type, n_prefix = args.n_prefix, n_class = args.n_class)
+        wrapper = MODELS[args.model_type](model_name=model_name, orig_model = args.orig_model, 
+            tuning_type = args.tuning_type, n_prefix = args.n_prefix, n_class = args.n_class)
         batch_size = args.batch_sizes[model_idx] if isinstance(args.batch_sizes, list) else args.batch_sizes
 
         scores = {}

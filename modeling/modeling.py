@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from transformers import T5Tokenizer, T5ForConditionalGeneration, GPT2Tokenizer, PreTrainedTokenizer, PreTrainedModel
 from transformers import GPT2LMHeadModel, LogitsProcessorList, LogitsProcessor
 from transformers.generation_utils import GenerationMixin, SampleOutput, SampleEncoderDecoderOutput, SampleDecoderOnlyOutput
-from modeling.modeling_add import set_extra_embeddings
+from modeling.modeling_add import load_prompt_model
 
 class ModelWrapper(ABC):
     """
@@ -214,28 +214,30 @@ class T5Wrapper(ModelWrapper):
 
 class GPT2Wrapper(ModelWrapper):
 
-    def __init__(self, model_name: str = "gpt2-xl", use_cuda: bool = True, tuning_type = None, n_prefix = 20, n_class = 2, is_debias=False):
+    def __init__(self, model_name: str = "gpt2-xl", orig_model:str = None, use_cuda: bool = True, 
+        tuning_type = None, n_prefix = 20, n_class = 2, is_debias=False):
         """
         :param model_name: the name of the pretrained GPT2 model (default: "gpt2-xl")
         :param use_cuda: whether to use CUDA
         """
         super().__init__(use_cuda=use_cuda)
         self._tokenizer = GPT2Tokenizer.from_pretrained(model_name)
+
+        prompt_only =  (orig_model is not None)
+        if orig_model is None:
+            orig_model = model_name
         if is_debias:
-            self._model = SelfDebiasingGPT2LMHeadModel.from_pretrained(model_name)  # type: SelfDebiasingGPT2LMHeadModel
+            self._model = SelfDebiasingGPT2LMHeadModel.from_pretrained(orig_model)  # type: SelfDebiasingGPT2LMHeadModel
         else:
-            self._model = GPT2LMHeadModel.from_pretrained(model_name)
+            self._model = GPT2LMHeadModel.from_pretrained(orig_model)
+
         self.tuning_type = tuning_type
         self.n_prefix = n_prefix
         self.n_class = n_class
 
         if tuning_type == "prompt_tuning":
-            set_extra_embeddings(self._model, n_prefix, n_class)
-            state_dict = torch.load(model_name+"/pytorch_model.bin")
-            self._model.transformer.wte.embed._load_from_state_dict(
-                    {"weight": state_dict["transformer.wte.embed.weight"]}, "", None, True, [], [], "")
-            self._model.transformer.wte.new_embed._load_from_state_dict(
-                    {"weight": state_dict["transformer.wte.new_embed.weight"]}, "", None, True, [], [], "")
+            load_prompt_model(self._model, n_prefix, n_class, 
+                save_dir = model_name, prompt_only=prompt_only)
 
         if use_cuda:
             self._model.parallelize()

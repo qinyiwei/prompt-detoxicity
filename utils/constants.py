@@ -26,3 +26,4 @@ PERSPECTIVE_API_ATTRIBUTES = (
     'FLIRTATION'
 )
 PERSPECTIVE_API_ATTRIBUTES_LOWER = tuple(a.lower() for a in PERSPECTIVE_API_ATTRIBUTES)
+ALLOWED_MODELS = ['gpt2', 'gpt2_prompt_fixed', 'gpt2_debias', 'gpt2_prompt_tunable']

@@ -12,8 +12,6 @@ import math
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-ALLOWED_MODELS = ['gpt2', 'gpt2_add', 'gpt2_debias', 'gpt2_prompt']
-
 '''
 def conditional_perplexity(generations_df, model, tokenizer, device='cuda'):
     perplexities = []
@@ -108,8 +106,7 @@ def distinctness(generations_df):
 @click.command()
 @click.option('--output-dir', required=False)
 @click.option('--model', required=False, help='Equivalent to `model_name_or_path` in transformers.')
-@click.option('--model-type', required=False,
-              type=click.Choice(ALLOWED_MODELS))
+@click.option('--model-type', required=False, type=str)
 @click.option('--generations_file', required=False, type=str, help='a jsonl file with generations and attribute scores')
 @click.option('--generate-safe', default=True, type=bool, help="generate safe texts or toxicity text")
 @click.option('--ppl-model', default="gpt2-xl", type=str, help="generate safe texts or toxicity text")

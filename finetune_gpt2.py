@@ -189,6 +189,7 @@ def main():
     training_args.loss_alpha = data_args.loss_alpha
     training_args.loss_beta = data_args.loss_beta
     training_args.learning_rate_LM = data_args.learning_rate_LM
+    training_args.freeze_LM = model_args.freeze_LM
 
     if data_args.eval_data_file is None and training_args.do_eval:
         raise ValueError(

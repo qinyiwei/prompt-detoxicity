@@ -1,4 +1,3 @@
-import pickle
 from pathlib import Path
 from typing import Optional, List, Iterable, Dict, Any
 
@@ -9,14 +8,11 @@ from tqdm import tqdm
 import os
 import json
 
-from generation.generation import gpt2, gpt2_add, gpt2_debias
-from utils.constants import PERSPECTIVE_API_ATTRIBUTES_LOWER
+from utils.constants import PERSPECTIVE_API_ATTRIBUTES_LOWER,ALLOWED_MODELS
 from utils.perspective_api import PerspectiveWorker, unpack_scores
 from utils.utils import load_jsonl, batchify, ensure_dir,load_cache
 import torch.utils.data as data
-from training.run_pplm_discrim_train import load_discriminator, get_cached_data_loader, collate_fn
-
-ALLOWED_MODELS = ['gpt2', 'gpt2_add', 'gpt2_debias', 'gpt2_prompt']
+from training.run_pplm_discrim_train import load_discriminator, collate_fn
 
 
 def make_generations_col(generations, responses):

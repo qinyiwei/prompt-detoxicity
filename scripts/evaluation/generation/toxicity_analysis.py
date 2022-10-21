@@ -5,14 +5,12 @@ import numpy as np
 import click
 from pathlib import Path
 
-ALLOWED_MODELS = ['gpt2', 'gpt2_add', 'gpt2_debias', 'gpt2_prompt']
 
 @click.command()
 @click.option('--output-dir', required=False, type=str,
               help='')
 @click.option('--model', required=False, help='Equivalent to `model_name_or_path` in transformers.')
-@click.option('--model-type', required=False,
-              type=click.Choice(ALLOWED_MODELS))
+@click.option('--model-type', required=False, type=str)
 @click.option('--generations_file', required=False, default=None, type=str, help='a jsonl file with generations and attribute scores')
 @click.option('--toxicity_th', required=False, default=0.5, type=float, help='threshold to decide if an example is toxicity')
 @click.option('--generate-safe', default=True, type=bool, help="generate safe texts or toxicity text")

@@ -15,7 +15,6 @@ from tqdm.auto import tqdm
 from transformers.pipelines import pipeline
 
 from generation.gpt2_generation import GPT2Generation
-from generation.gpt2_add_generation import GPT2AddGeneration
 from modeling.modeling import GPT2Wrapper
 
 from utils.utils import batchify, load_cache
@@ -132,10 +131,15 @@ def gpt2(prompts: pd.Series,
          num_samples: int,
          batch_size: int,
          model_name_or_path: str,
+         orig_model: str,
          out_file: Path,
          **generate_kwargs) -> Iterable[str]:
     # Setup model
-    generator = GPT2Generation(model_name_or_path)
+    generator = GPT2Generation(
+        model_name_or_path = model_name_or_path,
+        orig_model = orig_model,
+        tokenizer_name_or_path = model_name_or_path,
+    )
 
     yield from _gpt2_helper(prompts=prompts,
                             max_len=max_len,
@@ -146,7 +150,7 @@ def gpt2(prompts: pd.Series,
                             **generate_kwargs)
 
 
-def _gpt2_add_helper(prompts: pd.Series,
+def _gpt2_prompt_helper(prompts: pd.Series,
                  add_params: str,
                  max_len: int,
                  num_samples: int,
@@ -179,27 +183,29 @@ def _gpt2_add_helper(prompts: pd.Series,
             yield generation
 
 
-def gpt2_add(prompts: pd.Series,
+def gpt2_prompt(prompts: pd.Series,
          add_params: str,
          max_len: int,
          num_samples: int,
          batch_size: int,
          model_name_or_path: str,
+         orig_model: str,
          out_file: Path,
          tuning_type: str,
          n_prefix: int,
          n_class: int,
          **generate_kwargs) -> Iterable[str]:
     # Setup model
-    generator = GPT2AddGeneration(
+    generator = GPT2Generation(
         model_name_or_path = model_name_or_path,
+        orig_model = orig_model,
         tokenizer_name_or_path = model_name_or_path,
         tuning_type = tuning_type, 
         n_prefix = n_prefix, 
         n_class = n_class,
     )
 
-    yield from _gpt2_add_helper(prompts=prompts,
+    yield from _gpt2_prompt_helper(prompts=prompts,
                             add_params=add_params,
                             max_len=max_len,
                             num_samples=num_samples,

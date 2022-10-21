@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 from transformers import GPT2LMHeadModel, GPT2Tokenizer, GPT2PreTrainedModel
 from transformers.generation_utils import top_k_top_p_filtering
+from modeling.modeling_add import load_prompt_model
 
 from utils import utils
 
@@ -14,15 +15,24 @@ MAX_LENGTH = int(10000)  # Hardcoded max length to avoid infinite loop
 class GPT2Generation:
     STOP_TOKEN = "<|endoftext|>"
 
-    def __init__(self, model: Union[str, Path, GPT2PreTrainedModel] = 'gpt2', tokenizer: str = 'gpt2', seed: int = 42):
+    def __init__(self, model_name_or_path: Union[str, Path, GPT2PreTrainedModel] = 'gpt2', orig_model = None,
+            tokenizer_name_or_path: str = 'gpt2', seed: int = 42, tuning_type = None, n_prefix = 20, n_class = 2):
         # Set up device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         n_gpu = torch.cuda.device_count()
         utils.set_seed(seed, n_gpu)
 
         # Set up model
-        if isinstance(model, Path) or isinstance(model, str):
-            model = GPT2LMHeadModel.from_pretrained(str(model))
+        prompt_only =  (orig_model is not None)
+        if orig_model is None:
+            orig_model = model_name_or_path
+
+        if isinstance(orig_model, Path) or isinstance(orig_model, str):
+            model = GPT2LMHeadModel.from_pretrained(str(orig_model))
+        
+        if tuning_type == "prompt_tuning":
+            load_prompt_model(model, n_prefix, n_class, 
+                save_dir = model_name_or_path, prompt_only=prompt_only)
         self.model = model.to(self.device)
 
         # Set up tokenizer
@@ -30,7 +40,7 @@ class GPT2Generation:
         # pad_token_id = 50256, which normally belongs to the <EOS> token_id in GPT2. This is a very ugly
         # way that works at the moment of setting the pad_token_id to the <EOS> token that is already
         # included in the vocab size.
-        self.tokenizer = GPT2Tokenizer.from_pretrained(tokenizer, pad_token=self.STOP_TOKEN)
+        self.tokenizer = GPT2Tokenizer.from_pretrained(tokenizer_name_or_path, pad_token=self.STOP_TOKEN)
         assert self.tokenizer.eos_token_id == self.tokenizer.pad_token_id
 
     def __repr__(self):
@@ -41,6 +51,7 @@ class GPT2Generation:
 
     def generate(self,
                  prompt: Union[str, List[str]],
+                 add_params: str = None,
                  max_len: int = 20,
                  sample: bool = True,
                  k: int = 0,
@@ -49,6 +60,9 @@ class GPT2Generation:
                  **model_kwargs) -> List[str]:
         if isinstance(prompt, str):
             prompt = [prompt]
+
+        if add_params is not None:
+            prompt = [add_params + p for p in prompt]
 
         encodings_dict = self.tokenizer.batch_encode_plus(prompt, padding=True, return_tensors='pt')
 
