@@ -3,7 +3,7 @@ from typing import Dict, List, Union
 
 import numpy as np
 import torch
-from transformers import BatchEncoding
+from transformers import BatchEncoding, GPT2TokenizerFast, T5TokenizerFast
 import os
 from torch.utils.data.dataset import Dataset
 from transformers import PreTrainedTokenizer
@@ -16,7 +16,7 @@ class SingleAttributeLineByLineTextDataset(Dataset):
     This will be superseded by a framework-agnostic approach soon.
     """
 
-    def __init__(self, tokenizer: PreTrainedTokenizer, file_path_toxicity: str, file_path_safe: str, block_size: int):
+    def __init__(self, tokenizer: PreTrainedTokenizer, file_path_toxicity: str, file_path_safe: str):
         assert os.path.isfile(file_path_toxicity), f"Input file path {file_path_toxicity} not found"
         assert os.path.isfile(file_path_safe), f"Input file path {file_path_safe} not found"
         # Here, we do not cache the features, operating under the assumption
@@ -26,7 +26,6 @@ class SingleAttributeLineByLineTextDataset(Dataset):
         logger.info("Creating features from dataset file at %s", file_path_safe)
 
         self.tokenizer = tokenizer
-        self.block_size = block_size
         
         self.examples = []
         self.examples.extend(self._read_file(file_path_safe, attribute = 0)) # attribute = 0, safe
@@ -37,12 +36,7 @@ class SingleAttributeLineByLineTextDataset(Dataset):
         with open(file_path, encoding="utf-8") as f:
             lines = [line for line in f.read().splitlines() if (len(line) > 0 and not line.isspace())]
 
-        batch_encoding = self.tokenizer(lines, add_special_tokens=True, truncation=True, max_length=self.block_size)
-        examples = batch_encoding["input_ids"]
-        for e in examples:
-            e.append(self.tokenizer.eos_token_id)
-        examples = [{"input_ids": torch.tensor(e, dtype=torch.long), "attribute": attribute} for e in examples]
-
+        examples = [{"text": l, "attribute": attribute} for l in lines]
         return examples
 
     def __len__(self):
@@ -52,7 +46,8 @@ class SingleAttributeLineByLineTextDataset(Dataset):
         return self.examples[i]
 
 class SingleAttributeDataCollator:
-    def __init__(self, tokenizer, n_class = 2, n_prefix = None):
+    def __init__(self, tokenizer, data_args, n_class = 2, n_prefix = None):
+        self.data_args = data_args
         self.tokenizer = tokenizer
         self.pad_token_id = tokenizer.pad_token_id
         self.n_prefix = n_prefix
@@ -62,9 +57,7 @@ class SingleAttributeDataCollator:
         self, examples: List[Union[List[int], torch.Tensor, Dict[str, torch.Tensor]]]
     ) -> Dict[str, torch.Tensor]:
         # Handle dict or lists with proper padding and conversion to tensor.
-        assert isinstance(examples[0], (dict, BatchEncoding))
-        batch_orig = self.tokenizer.pad(examples, return_tensors="pt")
-
+        #assert isinstance(examples[0], (dict, BatchEncoding))
         add_tokens = ["<CLS_{}_TOK_{}>".format(str(j), str(i).zfill(2)) 
             for j in range(self.n_class) for i in range(self.n_prefix)]
 
@@ -77,17 +70,28 @@ class SingleAttributeDataCollator:
 
         token_ids_safe = self.tokenizer("".join(add_tokens_safe), return_tensors="pt")["input_ids"]
         token_ids_toxicity = self.tokenizer("".join(add_tokens_toxicity), return_tensors="pt")["input_ids"]
-        
+        if isinstance(self.tokenizer, T5TokenizerFast):
+            token_ids_safe = token_ids_safe[:,:-1]
+            token_ids_toxicity = token_ids_toxicity[:,:-1]
+
         assert token_ids_safe.shape[-1] == self.n_prefix
         assert token_ids_toxicity.shape[-1] == self.n_prefix
 
         batch = {}
-        batch.update(self.input_add_prefix(batch_orig, token_ids_safe, token_ids_toxicity, name = "maxi"))
-        batch.update(self.input_add_prefix(batch_orig, token_ids_safe, token_ids_toxicity, name = "mini"))
+        if not self.data_args.is_T5:
+            batch_orig = self._encode_GPT2(examples)
+            batch_orig = self.tokenizer.pad(batch_orig, return_tensors="pt")
+        else:
+            batch_orig = self._encode_T5(examples)
+
+        batch.update(self.input_add_prefix(batch_orig, token_ids_safe, token_ids_toxicity, 
+            name = "maxi", is_T5 = self.data_args.is_T5))
+        batch.update(self.input_add_prefix(batch_orig, token_ids_safe, token_ids_toxicity, 
+            name = "mini", is_T5 = self.data_args.is_T5))
 
         return batch
 
-    def input_add_prefix(self, batch_orig, token_ids_safe, token_ids_toxicity, name):
+    def input_add_prefix(self, batch_orig, token_ids_safe, token_ids_toxicity, name, is_T5):
         input_ids = batch_orig['input_ids']
         bs = input_ids.shape[0]
         mask_toxi = batch_orig['attribute'].unsqueeze(1).repeat(1,token_ids_safe.shape[1])
@@ -100,14 +104,57 @@ class SingleAttributeDataCollator:
 
         new_input_ids = torch.cat([prefixes, input_ids], 1)
         new_attention_mask = torch.cat([torch.ones((bs, self.n_prefix), dtype=torch.long), batch_orig["attention_mask"]], 1)
-        token_type_ids = torch.cat([torch.zeros((bs, self.n_prefix), dtype=torch.long), batch_orig["attention_mask"]], 1)
-        labels=torch.cat([torch.zeros((bs, self.n_prefix), dtype=torch.long), batch_orig["input_ids"]], 1)
 
-        inputs = {
-            "input_ids_{}".format(name): new_input_ids,
-            "attention_mask_{}".format(name): new_attention_mask,
-            "token_type_ids_{}".format(name): token_type_ids,
-            "labels_{}".format(name): labels,
-        }
-
+        if not is_T5:
+            token_type_ids = torch.cat([torch.zeros((bs, self.n_prefix), dtype=torch.long), batch_orig["attention_mask"]], 1)
+            labels=torch.cat([torch.zeros((bs, self.n_prefix), dtype=torch.long), batch_orig["input_ids"]], 1)
+            inputs = {
+                "input_ids_{}".format(name): new_input_ids,
+                "attention_mask_{}".format(name): new_attention_mask,
+                "token_type_ids_{}".format(name): token_type_ids,
+                "labels_{}".format(name): labels,
+            }
+        else:
+            labels = batch_orig["labels"]     
+            decoder_input_ids = self._shift_right_t5(labels)
+            inputs = {
+                "input_ids_{}".format(name): new_input_ids,
+                "attention_mask_{}".format(name): new_attention_mask,
+                "decoder_input_ids_{}".format(name): decoder_input_ids,
+                "labels_{}".format(name): labels,
+            }
         return inputs
+
+    def _shift_right_t5(self, input_ids):
+        # shift inputs to the right
+        shifted_input_ids = input_ids.new_zeros(input_ids.shape)
+        shifted_input_ids[..., 1:] = input_ids[..., :-1].clone()
+        shifted_input_ids[..., 0] = self.pad_token_id
+        return shifted_input_ids
+
+    def _encode_GPT2(self, batch) :
+        attributes = [b['attribute'] for b in batch]
+        text = [b['text'] for b in batch]
+
+        batch_encoding = self.tokenizer(text, add_special_tokens=True, truncation=True, max_length=self.data_args.block_size)
+        examples = batch_encoding["input_ids"]
+        for e in examples:
+            e.append(self.tokenizer.eos_token_id)
+        examples = [{"input_ids": torch.tensor(e, dtype=torch.long), "attribute": a} for e,a in zip(examples, attributes)]
+
+        return examples
+
+    def _encode_T5(self, batch) -> Dict[str, torch.Tensor]:
+        attributes = [b['attribute'] for b in batch]
+        batch_encoding = self.tokenizer.prepare_seq2seq_batch(
+            [x["text"][:int(len(x["text"])/2)] for x in batch],
+            tgt_texts=[x["text"][int(len(x["text"])/2):] for x in batch],
+            max_length=self.data_args.block_size,
+            max_target_length=self.data_args.block_size,
+            #padding=self.padding,  
+            return_tensors="pt",
+            #**self.dataset_kwargs,
+        )
+        batch = batch_encoding.data
+        batch['attribute'] = torch.tensor(attributes, dtype=torch.long)
+        return batch

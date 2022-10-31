@@ -1,6 +1,8 @@
 import torch
 import numpy as np
 import torch.nn.functional as F
+from transformers import T5ForConditionalGeneration
+from transformers import GPT2LMHeadModel
 
 class MyEmbedding(torch.nn.Module):
 
@@ -27,25 +29,39 @@ class MyEmbedding(torch.nn.Module):
             self.embed.scale_grad_by_freq,
             self.embed.sparse)
 
-def load_prompt_model(model, n_prefix, n_class, save_dir, prompt_only):
-    set_extra_embeddings(model, n_prefix, n_class)
+def load_prompt_model(model, n_prefix, n_class, save_dir, prompt_only, is_T5):
+    set_extra_embeddings(model, n_prefix, n_class, is_T5)
     state_dict = torch.load(save_dir+"/pytorch_model.bin")
-    if prompt_only:
-        model.transformer.wte.embed._load_from_state_dict(
-                {"weight": state_dict["embed.weight"]}, "", None, True, [], [], "")
-        model.transformer.wte.new_embed._load_from_state_dict(
-                {"weight": state_dict["new_embed.weight"]}, "", None, True, [], [], "")
+    if not is_T5:
+        if prompt_only:
+            model.transformer.wte.embed._load_from_state_dict(
+                    {"weight": state_dict["embed.weight"]}, "", None, True, [], [], "")
+            model.transformer.wte.new_embed._load_from_state_dict(
+                    {"weight": state_dict["new_embed.weight"]}, "", None, True, [], [], "")
+        else:
+            model.transformer.wte.embed._load_from_state_dict(
+                    {"weight": state_dict["transformer.wte.embed.weight"]}, "", None, True, [], [], "")
+            model.transformer.wte.new_embed._load_from_state_dict(
+                    {"weight": state_dict["transformer.wte.new_embed.weight"]}, "", None, True, [], [], "")
     else:
-        model.transformer.wte.embed._load_from_state_dict(
-                {"weight": state_dict["transformer.wte.embed.weight"]}, "", None, True, [], [], "")
-        model.transformer.wte.new_embed._load_from_state_dict(
-                {"weight": state_dict["transformer.wte.new_embed.weight"]}, "", None, True, [], [], "")
+        if prompt_only:
+            model.shared.embed._load_from_state_dict(
+                    {"weight": state_dict["embed.weight"]}, "", None, True, [], [], "")
+            model.shared.new_embed._load_from_state_dict(
+                    {"weight": state_dict["new_embed.weight"]}, "", None, True, [], [], "")
+        else:
+            model.shared.embed._load_from_state_dict(
+                    {"weight": state_dict["shared.embed.weight"]}, "", None, True, [], [], "")
+            model.shared.new_embed._load_from_state_dict(
+                    {"weight": state_dict["shared.new_embed.weight"]}, "", None, True, [], [], "")
 
-
-def set_extra_embeddings(model, n_prefix, n_class):
-    model.transformer.set_input_embeddings(
-        MyEmbedding(model.transformer.wte, n_prefix, n_class))
-
+def set_extra_embeddings(model, n_prefix, n_class, is_T5):
+    if not is_T5:
+        model.transformer.set_input_embeddings(
+            MyEmbedding(model.transformer.wte, n_prefix, n_class))
+    else:
+        model.set_input_embeddings(
+            MyEmbedding(model.shared, n_prefix, n_class))
 
 def freeze_LM(model):
     for param in model.parameters():

@@ -237,7 +237,7 @@ class GPT2Wrapper(ModelWrapper):
 
         if tuning_type == "prompt_tuning":
             load_prompt_model(self._model, n_prefix, n_class, 
-                save_dir = model_name, prompt_only=prompt_only)
+                save_dir = model_name, prompt_only=prompt_only, is_T5 = False)
 
         if use_cuda:
             self._model.parallelize()

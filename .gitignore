@@ -54,6 +54,7 @@ models/
 slurm*
 .vscode/
 run-diagnosis-detoxicity/
+run-diagnosis-sentiment/
 .DS_Store
 
 # Translations

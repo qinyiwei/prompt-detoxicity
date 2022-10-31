@@ -90,6 +90,14 @@ class ModelArguments:
         default=20,
         metadata={"help": "The number of prefix tokens."},
     )
+    is_T5: bool = field(
+        default=False,
+        metadata={"help": "Whether our model is T5."},
+    )
+    dropout_rate: float = field(
+        default=0.1,
+        metadata={"help": "dropout rate"},
+    )
 
 @dataclass
 class DataTrainingArguments:
@@ -164,8 +172,7 @@ def get_dataset(args: DataTrainingArguments, tokenizer: PreTrainedTokenizer, eva
         elif args.dataset_type == 'single_attribute':
             return SingleAttributeLineByLineTextDataset(tokenizer=tokenizer, 
                 file_path_toxicity=args.train_data_file_toxicity, 
-                file_path_safe=args.train_data_file_safe, 
-                block_size=args.block_size)
+                file_path_safe=args.train_data_file_safe)
         else:
             raise NotImplementedError
     else:
@@ -190,6 +197,8 @@ def main():
     training_args.loss_beta = data_args.loss_beta
     training_args.learning_rate_LM = data_args.learning_rate_LM
     training_args.freeze_LM = model_args.freeze_LM
+    training_args.is_T5 = model_args.is_T5
+    data_args.is_T5 = model_args.is_T5
 
     if data_args.eval_data_file is None and training_args.do_eval:
         raise ValueError(
@@ -239,6 +248,7 @@ def main():
     else:
         config = CONFIG_MAPPING[model_args.model_type]()
         logger.warning("You are instantiating a new config instance from scratch.")
+    setattr(config,'dropout_rate',model_args.dropout_rate)
 
     if model_args.tokenizer_name:
         if model_args.model_type == 'gpt2':
@@ -274,7 +284,7 @@ def main():
     #model.resize_token_embeddings(len(tokenizer))
 
     if model_args.add_tuning == 'prompt_tuning':
-        set_extra_embeddings(model, model_args.n_prefix, data_args.n_class)
+        set_extra_embeddings(model, model_args.n_prefix, data_args.n_class, is_T5 = model_args.is_T5)
 
     if model_args.model_name_or_path is not None and os.path.isdir(model_args.model_name_or_path):
         state_dict = torch.load(model_args.model_name_or_path+"/pytorch_model.bin")
@@ -306,7 +316,7 @@ def main():
         )
     elif model_args.add_tuning == 'prompt_tuning':
         data_collator = SingleAttributeDataCollator(
-            tokenizer=tokenizer, n_class = data_args.n_class, n_prefix = model_args.n_prefix
+            tokenizer=tokenizer, data_args = data_args, n_class = data_args.n_class, n_prefix = model_args.n_prefix
         )
     else:
         raise NotImplementedError

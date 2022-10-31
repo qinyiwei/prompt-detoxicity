@@ -7,6 +7,7 @@ import torch
 from tqdm import tqdm
 import os
 import json
+from transformers import pipeline
 
 from utils.constants import PERSPECTIVE_API_ATTRIBUTES_LOWER,ALLOWED_MODELS
 from utils.perspective_api import PerspectiveWorker, unpack_scores
@@ -15,17 +16,18 @@ import torch.utils.data as data
 from training.run_pplm_discrim_train import load_discriminator, collate_fn
 
 
-def make_generations_col(generations, responses):
+def make_generations_col(generations, responses, is_toxicity):
     for generation, response in zip(generations, responses):
-        if response['response']:
-            response = unpack_scores(response['response'])[0]
-        else:
-            response = {x: None for x in PERSPECTIVE_API_ATTRIBUTES_LOWER}
+        if is_toxicity:
+            if response['response']:
+                response = unpack_scores(response['response'])[0]
+            else:
+                response = {x: None for x in PERSPECTIVE_API_ATTRIBUTES_LOWER}
         yield {'text': generation, **response}
 
 
-def collate(dataset: Optional[pd.DataFrame], generations: List[str], responses: Iterable[Dict[str, Any]], output_file: str):
-    generations_col_iter = make_generations_col(generations, responses)
+def collate(dataset: Optional[pd.DataFrame], generations: List[str], responses: Iterable[Dict[str, Any]], output_file: str, is_toxicity: bool):
+    generations_col_iter = make_generations_col(generations, responses, is_toxicity)
     if dataset is None:
         generations_col = list(tqdm(generations_col_iter, total=len(generations), desc='Collating files'))
         dataset = pd.DataFrame(generations_col)
@@ -111,6 +113,7 @@ def main(output_dir: str, dataset_file: Optional[str], model: str, model_type: s
     
     if evaluation_method == "perspective":
         # Create perspective worker thread
+        is_toxicity = True
         perspective = PerspectiveWorker(
             out_file=toxicity_eval_file,
             total=len(prompts) * n,
@@ -126,6 +129,7 @@ def main(output_dir: str, dataset_file: Optional[str], model: str, model_type: s
         perspective.stop()
         print('Finished generation and perspective scoring!')
     elif evaluation_method == "toxicity_classifier":
+        is_toxicity = True
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         discriminator, meta_param = load_discriminator(weights_path, meta_path, device=device)
         discriminator = discriminator.to(device)
@@ -153,13 +157,32 @@ def main(output_dir: str, dataset_file: Optional[str], model: str, model_type: s
             json.dump(data_example, toxicity_f)
             toxicity_f.write("\n")
         toxicity_f.close()
-
+    elif evaluation_method == "sentiment-analysis":
+        # score generations and write to sentiment.jsonl
+        is_toxicity = False
+        classifier = pipeline('sentiment-analysis')
+        with open(toxicity_eval_file, 'w') as fo:
+            for i, p in tqdm(enumerate(prompts), total=len(prompts), desc='Scoring generations'):
+                sentences_for_prompt = []
+                for j in range(n):
+                    gen = generations[i*n + j]
+                    sentences_for_prompt.append(f'{p}{gen}')
+                try:
+                    predictions_for_prompt = classifier(sentences_for_prompt)
+                except IndexError: # sometimes the generation is too long?
+                    predictions_for_prompt = [{'label': "", 'score': float('nan')}] * len(sentences_for_prompt)
+                for res in predictions_for_prompt:
+                    fo.write(json.dumps(res) + '\n')
     else:
         raise NotImplementedError
+    
+    torch.cuda.empty_cache()
+    print('Finished generation and evluation!')
 
+    #Save evaluation file
     if os.path.exists(toxicity_eval_file):
         print('Collating output files')
-        collate(dataset, generations, load_jsonl(toxicity_eval_file), output_file)
+        collate(dataset, generations, load_jsonl(toxicity_eval_file), output_file, is_toxicity)
 
     print("save perspective score to {}".format(toxicity_eval_file))
     print("save output file to {}".format(output_file))

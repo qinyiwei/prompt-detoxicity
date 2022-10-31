@@ -16,14 +16,17 @@ class ContrastiveTrainer(Trainer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.score_fct = nn.NLLLoss(reduction='none', ignore_index=self.model.config.pad_token_id)
-        self.lsm = nn.LogSoftmax(dim=1)
+        #self.lsm = nn.LogSoftmax(dim=1)
         #self.loss = nn.MarginRankingLoss(margin=self.args.margin)
-        self.lsm = torch.nn.CrossEntropyLoss(reduction="none")
+        self.loss_gpt = torch.nn.CrossEntropyLoss(reduction="none")
+        self.loss_t5 = nn.NLLLoss(reduction='none', ignore_index=self.model.config.pad_token_id)
+        self.lsm = nn.LogSoftmax(dim=1)
 
-    def cal_loss(self, model, input_ids, attention_mask, token_type_ids,
+    def cal_loss_GPT2(self, model, input_ids, attention_mask, token_type_ids,
               labels):
 
-        outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+        outputs = model(input_ids=input_ids, 
+            attention_mask=attention_mask)
         logits = outputs.logits[..., :-1, :].contiguous()
 
         if labels is None:
@@ -31,12 +34,26 @@ class ContrastiveTrainer(Trainer):
         labels = labels[..., 1:].contiguous()
         label_mask = token_type_ids[..., 1:].contiguous()
 
-
-
-        losses = self.lsm(logits.view(-1, logits.size(-1)),
+        losses = self.loss_gpt(logits.view(-1, logits.size(-1)),
                         labels.view(-1)) # [batch_size, length]
         losses = losses.view(logits.size(0), logits.size(1)) * label_mask
         return torch.sum(losses, axis=1) / torch.sum(label_mask, axis=1)
+
+    def cal_loss_T5(self, model, input_ids, attention_mask, decoder_input_ids, labels):
+        outputs = model(input_ids=input_ids, 
+            attention_mask=attention_mask, 
+            decoder_input_ids=decoder_input_ids, 
+            labels=labels)
+
+        tgt_len = attention_mask.sum(dim=1)
+        tgt_tokens = labels
+        logits = outputs.logits.view(-1, self.model.config.vocab_size)
+        
+        losses = self.loss_t5(self.lsm(logits), tgt_tokens.view(-1))
+        losses = losses.view(tgt_tokens.shape[0], -1)
+        losses = losses.sum(dim=1) / tgt_len
+
+        return losses
 
     def compute_loss(self, model, inputs):
         """
@@ -44,9 +61,13 @@ class ContrastiveTrainer(Trainer):
 
         Subclass and override for custom behavior.
         """
-        F_maximize = -self.cal_loss(model, inputs['input_ids_maxi'], inputs['attention_mask_maxi'], inputs['token_type_ids_maxi'], inputs['labels_maxi'])
-        F_minimize = -self.cal_loss(model, inputs['input_ids_mini'], inputs['attention_mask_mini'], inputs['token_type_ids_mini'], inputs['labels_mini'])
-        
+        if not self.args.is_T5:
+            F_maximize = -self.cal_loss_GPT2(model, inputs['input_ids_maxi'], inputs['attention_mask_maxi'], inputs['token_type_ids_maxi'], inputs['labels_maxi'])
+            F_minimize = -self.cal_loss_GPT2(model, inputs['input_ids_mini'], inputs['attention_mask_mini'], inputs['token_type_ids_mini'], inputs['labels_mini'])
+        else:
+            F_maximize = -self.cal_loss_T5(model, inputs['input_ids_maxi'], inputs['attention_mask_maxi'], inputs['decoder_input_ids_maxi'], inputs['labels_maxi'])
+            F_minimize = -self.cal_loss_T5(model, inputs['input_ids_mini'], inputs['attention_mask_mini'], inputs['decoder_input_ids_mini'], inputs['labels_mini'])
+
         if self.args.loss_type == 1:
             loss = F.relu(F_minimize - F_maximize + self.args.margin)
         elif self.args.loss_type == 2:
@@ -139,19 +160,18 @@ class ContrastiveTrainer(Trainer):
         logger.info("Saving model checkpoint to %s", output_dir)
         # Save a trained model and configuration using `save_pretrained()`.
         # They can then be reloaded using `from_pretrained()`
-        if not isinstance(self.model, PreTrainedModel):
-            logger.info("Trainer.model is not a `PreTrainedModel`, only saving its state dict.")
+
+        if isinstance(self.model, PreTrainedModel) and not self.args.freeze_LM:
+            self.model.save_pretrained(output_dir)
+        else:
             if not self.args.freeze_LM:
                 state_dict = self.model.state_dict()
             else:
-                state_dict = self.model.transformer.wte.state_dict()
+                if not self.args.is_T5:
+                    state_dict = self.model.transformer.wte.state_dict()
+                else:
+                    state_dict = self.model.shared.state_dict()
             torch.save(state_dict, os.path.join(output_dir, WEIGHTS_NAME))
-        else:
-            if not self.args.freeze_LM:
-                self.model.save_pretrained(output_dir)
-            else:
-                state_dict = self.model.transformer.wte.state_dict()
-                torch.save(state_dict, os.path.join(output_dir, WEIGHTS_NAME))
 
         if self.tokenizer is not None and self.is_world_process_zero():
             self.tokenizer.save_pretrained(output_dir)

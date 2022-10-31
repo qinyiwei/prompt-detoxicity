@@ -32,7 +32,7 @@ class GPT2Generation:
         
         if tuning_type == "prompt_tuning":
             load_prompt_model(model, n_prefix, n_class, 
-                save_dir = model_name_or_path, prompt_only=prompt_only)
+                save_dir = model_name_or_path, prompt_only=prompt_only, is_T5 = False)
         self.model = model.to(self.device)
 
         # Set up tokenizer
