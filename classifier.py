@@ -1,13 +1,10 @@
 import argparse
-import random
 from typing import List, Dict
 import torch
 
-from scipy.stats import pearsonr
 from tqdm import tqdm
 
-from modeling.modeling import ModelWrapper, GPT2Wrapper, T5Wrapper
-from io_utils import load_model_outputs, ModelOutput
+from io_utils import load_model_outputs
 from training.run_pplm_discrim_train import load_discriminator, get_cached_data_loader, collate_fn
 import torch.utils.data as data
 

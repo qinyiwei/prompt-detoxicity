@@ -28,7 +28,7 @@ def _pipeline_helper(prompts: pd.Series,
                      max_len: int,
                      num_samples: int,
                      out_file: Path,
-                     p: float,
+                     top_p: float,
                      **generate_kwargs):
     # Load cached generations
     num_cached_generations = 0
@@ -56,7 +56,7 @@ def _pipeline_helper(prompts: pd.Series,
                               num_return_sequences=num_samples,
                               clean_up_tokenization_spaces=True,
                               do_sample=True,
-                              top_p=p,
+                              top_p=top_p,
                               max_length=ctx_len + max_len,
                               return_prompt=False,
                               **generate_kwargs)
@@ -118,7 +118,7 @@ def _gpt2_helper(prompts: pd.Series,
                        dynamic_ncols=True,
                        postfix={'batch_size': batch_size}):
         # Generate
-        batch = generator.generate(prompt, max_len, **generate_kwargs)
+        batch = generator.generate(prompt = prompt, max_len = max_len, **generate_kwargs)
 
         for generation in batch:
             with out_file.open('a') as f:
@@ -175,7 +175,7 @@ def _gpt2_prompt_helper(prompts: pd.Series,
                        dynamic_ncols=True,
                        postfix={'batch_size': batch_size}):
         # Generate
-        batch = generator.generate(prompt, add_params, max_len, **generate_kwargs)
+        batch = generator.generate(prompt = prompt, add_params = add_params, max_len = max_len, **generate_kwargs)
 
         for generation in batch:
             with out_file.open('a') as f:
@@ -239,7 +239,7 @@ def _gpt2_debias_helper(prompts: pd.Series,
                        dynamic_ncols=True,
                        postfix={'batch_size': batch_size}):
         # Generate
-        batch = generator.generate_self_debiasing(prompt, max_length = max_len, **generate_kwargs)
+        batch = generator.generate_self_debiasing(input_texts = prompt, max_length = max_len, **generate_kwargs)
 
         for generation in batch:
             with out_file.open('a') as f:
@@ -252,11 +252,23 @@ def gpt2_debias(prompts: pd.Series,
          num_samples: int,
          batch_size: int,
          model_name_or_path: str,
+         orig_model: str,
          out_file: Path,
          is_debias: bool,
+         tuning_type: str,
+         n_prefix: int,
+         n_class: int,
          **generate_kwargs) -> Iterable[str]:
     # Setup model
-    generator = GPT2Wrapper(model_name=model_name_or_path, is_debias=is_debias)
+    generator = GPT2Wrapper(
+        model_name_or_path = model_name_or_path,
+        orig_model = orig_model,
+        tokenizer_name_or_path = model_name_or_path,
+        is_debias=is_debias,
+        tuning_type = tuning_type, 
+        n_prefix = n_prefix, 
+        n_class = n_class,
+    )
 
     yield from _gpt2_debias_helper(prompts=prompts,
                             max_len=max_len,

@@ -127,7 +127,7 @@ if __name__ == '__main__':
 
 
     for model_idx, model_name in enumerate(args.models):
-        wrapper = MODELS[args.model_type](model_name=model_name, orig_model = args.orig_model, 
+        wrapper = MODELS[args.model_type](model_name_or_path=model_name, tokenizer_name_or_path = model_name, orig_model = args.orig_model, 
             tuning_type = args.tuning_type, n_prefix = args.n_prefix, n_class = args.n_class)
         batch_size = args.batch_sizes[model_idx] if isinstance(args.batch_sizes, list) else args.batch_sizes
 

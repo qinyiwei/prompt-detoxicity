@@ -54,10 +54,14 @@ class GPT2Generation:
                  add_params: str = None,
                  max_len: int = 20,
                  sample: bool = True,
-                 k: int = 0,
-                 p: float = 1.0,
+                 top_k: int = 0,
+                 top_p: float = 1.0,
                  temperature: float = 1.0,
                  **model_kwargs) -> List[str]:
+        #TODO: not support beam search
+        do_sample = model_kwargs.pop('do_sample')
+        num_beams = model_kwargs.pop('num_beams')
+
         if isinstance(prompt, str):
             prompt = [prompt]
 
@@ -93,7 +97,7 @@ class GPT2Generation:
                     if temperature != 1.0:
                         next_token_logits = next_token_logits / temperature
                     # Top-p/top-k filtering
-                    next_token_logits = top_k_top_p_filtering(next_token_logits, top_k=k, top_p=p)
+                    next_token_logits = top_k_top_p_filtering(next_token_logits, top_k=top_k, top_p=top_p)
                     # Sample
                     probs = F.softmax(next_token_logits, dim=-1)
                     next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)

@@ -1,7 +1,9 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional, Tuple, Union
+import warnings
 
 import torch
+import torch.distributed as dist
 from torch.nn import CrossEntropyLoss
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,6 +12,11 @@ from transformers import T5Tokenizer, T5ForConditionalGeneration, GPT2Tokenizer,
 from transformers import GPT2LMHeadModel, LogitsProcessorList, LogitsProcessor
 from transformers.generation_utils import GenerationMixin, SampleOutput, SampleEncoderDecoderOutput, SampleDecoderOnlyOutput
 from modeling.modeling_add import load_prompt_model
+
+from transformers.generation_stopping_criteria import (
+    StoppingCriteriaList,
+    validate_stopping_criteria,
+)
 
 class ModelWrapper(ABC):
     """
@@ -214,30 +221,32 @@ class T5Wrapper(ModelWrapper):
 
 class GPT2Wrapper(ModelWrapper):
 
-    def __init__(self, model_name: str = "gpt2-xl", orig_model:str = None, use_cuda: bool = True, 
-        tuning_type = None, n_prefix = 20, n_class = 2, is_debias=False):
+    def __init__(self, model_name_or_path: str, tokenizer_name_or_path: str, orig_model:str = None, 
+        use_cuda: bool = True, tuning_type = None, n_prefix = 20, n_class = 2, is_debias=False):
         """
         :param model_name: the name of the pretrained GPT2 model (default: "gpt2-xl")
         :param use_cuda: whether to use CUDA
         """
         super().__init__(use_cuda=use_cuda)
-        self._tokenizer = GPT2Tokenizer.from_pretrained(model_name)
+        # Set up tokenizer
+        self._tokenizer = GPT2Tokenizer.from_pretrained(tokenizer_name_or_path)
 
+        # Set up model
         prompt_only =  (orig_model is not None)
         if orig_model is None:
-            orig_model = model_name
+            orig_model = model_name_or_path
         if is_debias:
             self._model = SelfDebiasingGPT2LMHeadModel.from_pretrained(orig_model)  # type: SelfDebiasingGPT2LMHeadModel
         else:
             self._model = GPT2LMHeadModel.from_pretrained(orig_model)
 
+        if tuning_type == "prompt_tuning":
+            load_prompt_model(self._model, n_prefix, n_class, 
+                save_dir = model_name_or_path, prompt_only=prompt_only, is_T5 = False)
+
         self.tuning_type = tuning_type
         self.n_prefix = n_prefix
         self.n_class = n_class
-
-        if tuning_type == "prompt_tuning":
-            load_prompt_model(self._model, n_prefix, n_class, 
-                save_dir = model_name, prompt_only=prompt_only, is_T5 = False)
 
         if use_cuda:
             self._model.parallelize()
@@ -340,7 +349,7 @@ class GPT2Wrapper(ModelWrapper):
     def generate(self, input_text: str, **kwargs):
         input_ids = self._tokenizer.encode(input_text, return_tensors='pt').to(self._device)
         output_ids = self._model.generate(input_ids, **kwargs)[0]
-        return self._tokenizer.decode(output_ids)
+        return self._tokenizer.decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
 
     def generate_self_debiasing(self, input_texts: List[str], debiasing_prefixes: List[str], decay_constant: float = 50,
                                 epsilon: float = 0.01, debug: bool = False, min_length: int = None, max_length: int = None,
@@ -370,7 +379,7 @@ class GPT2Wrapper(ModelWrapper):
 
         batch_size = output_ids.shape[0] // (1 + len(debiasing_prefixes))
         output_ids = output_ids[:batch_size, inputs['input_ids'].shape[1]:]
-        return self._tokenizer.batch_decode(output_ids)
+        return self._tokenizer.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
 
     def compute_loss(self, input_ids: torch.LongTensor, labels: torch.LongTensor) -> torch.Tensor:
         outputs = self._model(input_ids, labels=labels)
@@ -538,7 +547,7 @@ class SelfDebiasingGPT2LMHeadModel(GPT2LMHeadModel, GenerationMixin):
 
     def beam_sample(self, *args, **kwargs):
         raise NotImplementedError("Beam sampling is not implemented for self-debiasing models")
-
+    '''
     def sample(self, input_ids: torch.LongTensor, logits_processor: Optional[LogitsProcessorList] = None,
                logits_warper: Optional[LogitsProcessorList] = None, max_length: Optional[int] = None, pad_token_id: Optional[int] = None,
                eos_token_id: Optional[int] = None, output_attentions: Optional[bool] = None, output_hidden_states: Optional[bool] = None,
@@ -676,3 +685,179 @@ class SelfDebiasingGPT2LMHeadModel(GPT2LMHeadModel, GenerationMixin):
                 )
         else:
             return input_ids
+    '''
+    
+    def sample(
+            self,
+            input_ids: torch.LongTensor,
+            logits_processor: Optional[LogitsProcessorList] = None,
+            stopping_criteria: Optional[StoppingCriteriaList] = None,
+            logits_warper: Optional[LogitsProcessorList] = None,
+            max_length: Optional[int] = None,
+            pad_token_id: Optional[int] = None,
+            eos_token_id: Optional[int] = None, 
+            output_attentions: Optional[bool] = None,
+            output_hidden_states: Optional[bool] = None,
+            output_scores: Optional[bool] = None,
+            return_dict_in_generate: Optional[bool] = None,
+            synced_gpus: Optional[bool] = None,
+            **model_kwargs,
+        ) -> Union[SampleOutput, torch.LongTensor]:
+        """
+        This is a verbatim copy of the original implementation by huggingface, with a single modification to ensure that a text and all
+        corresponding self-debiasing inputs always chose the same token to generate next. This modification is enclosed by the texts
+        "BEGIN MODIFICATIONS" and "END MODIFICATIONS", respectively.
+        """
+        # init values
+        logits_processor = logits_processor if logits_processor is not None else LogitsProcessorList()
+        stopping_criteria = stopping_criteria if stopping_criteria is not None else StoppingCriteriaList()
+        if max_length is not None:
+            warnings.warn(
+                "`max_length` is deprecated in this function, use `stopping_criteria=StoppingCriteriaList(MaxLengthCriteria(max_length=max_length))` instead.",
+                UserWarning,
+            )
+            stopping_criteria = validate_stopping_criteria(stopping_criteria, max_length)
+        logits_warper = logits_warper if logits_warper is not None else LogitsProcessorList()
+        pad_token_id = pad_token_id if pad_token_id is not None else self.config.pad_token_id
+        eos_token_id = eos_token_id if eos_token_id is not None else self.config.eos_token_id
+        output_scores = output_scores if output_scores is not None else self.config.output_scores
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        return_dict_in_generate = (
+            return_dict_in_generate if return_dict_in_generate is not None else self.config.return_dict_in_generate
+        )
+
+        # init attention / hidden states / scores tuples
+        scores = () if (return_dict_in_generate and output_scores) else None
+        decoder_attentions = () if (return_dict_in_generate and output_attentions) else None
+        cross_attentions = () if (return_dict_in_generate and output_attentions) else None
+        decoder_hidden_states = () if (return_dict_in_generate and output_hidden_states) else None
+
+        # if model is an encoder-decoder, retrieve encoder attention weights and hidden states
+        if return_dict_in_generate and self.config.is_encoder_decoder:
+            encoder_attentions = model_kwargs["encoder_outputs"].get("attentions") if output_attentions else None
+            encoder_hidden_states = (
+                model_kwargs["encoder_outputs"].get("hidden_states") if output_hidden_states else None
+            )
+
+        # keep track of which sequences are already finished
+        unfinished_sequences = input_ids.new(input_ids.shape[0]).fill_(1)
+        cur_len = input_ids.shape[-1]
+
+        this_peer_finished = False  # used by synced_gpus only
+        # auto-regressive generation
+        while True:
+
+            if synced_gpus:
+                # Under synced_gpus the `forward` call must continue until all gpus complete their sequence.
+                # The following logic allows an early break if all peers finished generating their sequence
+                this_peer_finished_flag = torch.tensor(0.0 if this_peer_finished else 1.0).to(input_ids.device)
+                # send 0.0 if we finished, 1.0 otherwise
+                dist.all_reduce(this_peer_finished_flag, op=dist.ReduceOp.SUM)
+                # did all peers finish? the reduced sum will be 0.0 then
+                if this_peer_finished_flag.item() == 0.0:
+                    break
+
+            # prepare model inputs
+            model_inputs = self.prepare_inputs_for_generation(input_ids, **model_kwargs)
+
+            # forward pass to get next token
+            outputs = self(
+                **model_inputs,
+                return_dict=True,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+            )
+
+            if synced_gpus and this_peer_finished:
+                cur_len = cur_len + 1
+                continue  # don't waste resources running the code we don't need
+
+            next_token_logits = outputs.logits[:, -1, :]
+
+            # pre-process distribution
+            next_token_scores = logits_processor(input_ids, next_token_logits)
+            next_token_scores = logits_warper(input_ids, next_token_scores)
+
+            # Store scores, attentions and hidden_states when required
+            if return_dict_in_generate:
+                if output_scores:
+                    scores += (next_token_scores,)
+                if output_attentions:
+                    decoder_attentions += (
+                        (outputs.decoder_attentions,) if self.config.is_encoder_decoder else (outputs.attentions,)
+                    )
+                    if self.config.is_encoder_decoder:
+                        cross_attentions += (outputs.cross_attentions,)
+
+                if output_hidden_states:
+                    decoder_hidden_states += (
+                        (outputs.decoder_hidden_states,)
+                        if self.config.is_encoder_decoder
+                        else (outputs.hidden_states,)
+                    )
+
+            # sample
+            probs = nn.functional.softmax(next_token_scores, dim=-1)
+            next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
+
+            # =========================
+            # BEGIN MODIFICATIONS
+            # the following modification to the sample method is necessary to ensure that each debiasing sentence is continued in the same
+            # way as the original sentence
+            if self.logits_processor is not None:
+                batch_size = next_tokens.shape[0] // (1 + self.logits_processor.num_debiasing_prefixes)
+                regular_sentence_indices = range(batch_size)
+                for regular_sentence_idx in regular_sentence_indices:
+                    debiasing_sentence_indices = self.logits_processor._get_bias_indices(regular_sentence_idx, batch_size)
+                    for debiasing_sentence_idx in debiasing_sentence_indices:
+                        next_tokens[debiasing_sentence_idx] = next_tokens[regular_sentence_idx]
+            # END MODIFICATIONS
+            # =========================
+
+            # finished sentences should have their next token be a padding token
+            if eos_token_id is not None:
+                assert pad_token_id is not None, "If eos_token_id is defined, make sure that pad_token_id is defined."
+                next_tokens = next_tokens * unfinished_sequences + pad_token_id * (1 - unfinished_sequences)
+
+            # update generated ids, model inputs, and length for next step
+            input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
+            model_kwargs = self._update_model_kwargs_for_generation(
+                outputs, model_kwargs, is_encoder_decoder=self.config.is_encoder_decoder
+            )
+            cur_len = cur_len + 1
+
+            # if eos_token was found in one sentence, set sentence to finished
+            if eos_token_id is not None:
+                unfinished_sequences = unfinished_sequences.mul((next_tokens != eos_token_id).long())
+
+            # stop when each sentence is finished, or if we exceed the maximum length
+            if unfinished_sequences.max() == 0 or stopping_criteria(input_ids, scores):
+                if not synced_gpus:
+                    break
+                else:
+                    this_peer_finished = True
+
+        if return_dict_in_generate:
+            if self.config.is_encoder_decoder:
+                return SampleEncoderDecoderOutput(
+                    sequences=input_ids,
+                    scores=scores,
+                    encoder_attentions=encoder_attentions,
+                    encoder_hidden_states=encoder_hidden_states,
+                    decoder_attentions=decoder_attentions,
+                    cross_attentions=cross_attentions,
+                    decoder_hidden_states=decoder_hidden_states,
+                )
+            else:
+                return SampleDecoderOnlyOutput(
+                    sequences=input_ids,
+                    scores=scores,
+                    attentions=decoder_attentions,
+                    hidden_states=decoder_hidden_states,
+                )
+        else:
+            return input_ids
+    

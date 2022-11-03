@@ -16,11 +16,11 @@ PATTERNS_generative_LM = {
 
 DEBIASING_PREFIXES = [
     "The following text contains rude, disrespectful, or unreasonable language:\n",
-    #"The following text contains very hateful, aggressive, disrespectful language:\n",
-    #"The following text contains sexually explicit language:\n",
-    #"The following text contains a threat:\n",
-    #"The following text contains negative or hateful language targeting someone because of their identity:\n",
-    #"The following text contains swear words, curse words, or other obscene or profane language:\n"
+    "The following text contains very hateful, aggressive, disrespectful language:\n",
+    "The following text contains sexually explicit language:\n",
+    "The following text contains a threat:\n",
+    "The following text contains negative or hateful language targeting someone because of their identity:\n",
+    "The following text contains swear words, curse words, or other obscene or profane language:\n"
 ]
 
 @click.command()
@@ -34,16 +34,25 @@ DEBIASING_PREFIXES = [
 @click.option('--n', default=25, help='Number of samples to generate for each prompt. When used with --eos')
 @click.option('--max-tokens', default=20, help='Number of tokens (usually BPE) to generate for each prompt.')
 @click.option('--batch-size', default=32)
-@click.option('--filter_p', default=0.9, type=float, help='Hyperparameter for truncation of p_base')
-@click.option('--p', default=1.0, type=float, help='Hyperparameter for nucleus sampling')
+@click.option('--top_p', default=0.9, type=float, 
+    help='Only for sampling. If set, only the top_p tokens with the highest probabilities are considered.')
+@click.option('--top_k', default=0, type=int, 
+    help='Only for sampling. If set, only the top_k tokens with the highest probabilities are considered.')
+@click.option('--num_beams', default=1, type=int, 
+    help='The number of beams for beam search')
+@click.option('--do_sample', default=True, type=bool, help="Whether to perform sampling instead of greedy decoding.")
+@click.option('--decay_constant', default=50, type=int, 
+    help='Decay constant for self debias method.')
+@click.option('--tuning_type', type=str, default=None)
 @click.option('--n_prefix', type = int, default=20)
 @click.option('--n_class', type = int, default=2)
-@click.option('--tuning_type', type=str, default=None)
 @click.option('--number', type=int, default=None)
 @click.option('--generate-safe', default=True, type=bool, help="generate safe texts or toxicity text")
+@click.option('--use-debias-prefixes-all', default=False, type=bool, help="whether to use all 6 debias prefixes")
 
 def main(output_dir: str, dataset_file: Optional[str], model: str, orig_model: str, model_type: str, n: int, max_tokens: int, batch_size: int, 
-         filter_p: float, p: float, tuning_type: str, n_prefix: int, n_class: int, number: int, generate_safe: bool):
+         top_p: float, top_k: int, num_beams: int, do_sample: bool, decay_constant:int, tuning_type: str, 
+         n_prefix: int, n_class: int, number: int, generate_safe: bool, use_debias_prefixes_all: bool):
     # Load prompts from dataset file
     assert dataset_file.endswith('.jsonl')
     dataset = pd.read_json(dataset_file, lines=True)
@@ -71,9 +80,12 @@ def main(output_dir: str, dataset_file: Optional[str], model: str, orig_model: s
         generations_iter = gpt2(
             prompts=prompts,
             add_params=None,
-            max_len=max_tokens,
+            max_len=max_tokens, 
+            do_sample=do_sample,
+            num_beams=num_beams, 
+            top_k=top_k, 
             num_samples=n,
-            p=p,
+            top_p=top_p,
             batch_size=batch_size,
             model_name_or_path=model,
             orig_model=orig_model,
@@ -94,9 +106,12 @@ def main(output_dir: str, dataset_file: Optional[str], model: str, orig_model: s
         generations_iter = gpt2_prompt(
             prompts=prompts,
             add_params=add_params,
-            max_len=max_tokens,
+            max_len=max_tokens, 
+            do_sample=do_sample,
+            num_beams=num_beams, 
+            top_k=top_k, 
             num_samples=n,
-            p=p,
+            top_p=top_p,
             batch_size=batch_size,
             model_name_or_path=model,
             orig_model=orig_model,
@@ -106,24 +121,44 @@ def main(output_dir: str, dataset_file: Optional[str], model: str, orig_model: s
             n_class = n_class,
         )
     elif model_type == 'gpt2_debias':
+        if tuning_type == None:
+            debiasing_prefixes_neg = DEBIASING_PREFIXES if use_debias_prefixes_all else DEBIASING_PREFIXES[0:1]
+            debiasing_prefixes_pos = None
+        elif tuning_type == 'prompt_tuning':
+            debiasing_prefixes_safe = ["<CLS_{}_TOK_{}>".format(str(0), str(i).zfill(2)) 
+                for i in range(n_prefix)]
+            debiasing_prefixes_toxicity = ["<CLS_{}_TOK_{}>".format(str(1), str(i).zfill(2)) 
+                for i in range(n_prefix)]
+            if generate_safe:
+                debiasing_prefixes_neg = ["".join(debiasing_prefixes_toxicity)]
+                debiasing_prefixes_pos = ["".join(debiasing_prefixes_safe)]
+            else:
+                debiasing_prefixes_neg = ["".join(debiasing_prefixes_safe)]
+                debiasing_prefixes_pos = ["".join(debiasing_prefixes_toxicity)]
+        else:
+            raise NotImplementedError
         generations_iter = gpt2_debias(
             prompts=prompts,
-            max_len=max_tokens, 
+            max_len=max_tokens,  
+            min_length=None, 
+            do_sample=do_sample,
+            num_beams=num_beams, 
+            top_k=top_k, 
             num_samples=n,
             batch_size=batch_size,
             model_name_or_path=model,
+            orig_model=orig_model,
             out_file=generations_file,
-            top_p=p,
-            debiasing_prefixes=DEBIASING_PREFIXES, 
-            decay_constant=50, 
+            top_p=top_p,
+            debiasing_prefixes=debiasing_prefixes_neg, 
+            decay_constant=decay_constant, 
             epsilon=0.01,
-            debug=False, 
-            min_length=None, 
-            do_sample=True,
-            num_beams=1, 
-            top_k=None, 
+            debug=False,
             num_return_sequences=1,
             is_debias=True,
+            tuning_type = tuning_type,
+            n_prefix = n_prefix,
+            n_class = n_class,
         )
 
     else:
