@@ -77,7 +77,7 @@ class Dataset(data.Dataset):
 @click.option('--model', required=True, help='Equivalent to `model_name_or_path` in transformers.')
 @click.option('--model-type', required=True,
               type=click.Choice(ALLOWED_MODELS))
-@click.option('--perspective-rate-limit', default=25)
+@click.option('--perspective-rate-limit', default=20)
 @click.option('--n', default=25, help='Number of samples to generate for each prompt. When used with --eos')
 @click.option('--number', type=int, default=None)
 @click.option('--evaluation-method', type=str, default="perspective", help="choose from perspective|toxicity_classifier")
@@ -88,19 +88,9 @@ class Dataset(data.Dataset):
 def main(output_dir: str, dataset_file: Optional[str], model: str, model_type: str,
          perspective_rate_limit: int, n: int, number: int, evaluation_method: str, weights_path: str, meta_path: str, batch_size: int, generate_safe: bool):
     # Load prompts from dataset file
-    if dataset_file.endswith('.jsonl'):
-        dataset = pd.read_json(dataset_file, lines=True)
-        prompts = pd.json_normalize(dataset['prompt'])['text']
-    else:
-        f_prompts = open(dataset_file, 'r')
-        # 1
-        prompts = f_prompts.readlines()
-        # 2
-        #prompts = [p[7:] for p in prompts]
-        # 3
-        #prompts = [p[7:] for p in prompts if p.startswith('[ WP ]')]
-
-        prompts = pd.Series(prompts)
+    assert dataset_file.endswith('.jsonl')
+    dataset = pd.read_json(dataset_file, lines=True)
+    prompts = pd.json_normalize(dataset['prompt'])['text']
 
     print('Prompts:', '\n', prompts)
 
@@ -115,11 +105,11 @@ def main(output_dir: str, dataset_file: Optional[str], model: str, model_type: s
     generations_file = output_dir / \
         f'{model_type}_{model_name}_{"safe" if generate_safe else "toxicity"}_generations.jsonl'
     toxicity_eval_file = output_dir / \
-        f'{model_type}_{model_name}_{"safe" if generate_safe else "toxicity"}_toxicity_eval.jsonl'
+        f'{model_type}_{model_name}_{"safe" if generate_safe else "toxicity"}_toxicity_eval_{evaluation_method}.jsonl'
     assert os.path.exists(generations_file)   # don't overwrite generations!
     ensure_dir(output_dir)
     output_file = output_dir / \
-        f'{"prompted"}_gens_{model_type}_{model_name}_{"safe" if generate_safe else "toxicity"}.jsonl'
+        f'{"prompted"}_gens_{model_type}_{model_name}_{evaluation_method}_{"safe" if generate_safe else "toxicity"}.jsonl'
 
     # Generate and collate perspective scores
     generations = []

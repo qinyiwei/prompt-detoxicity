@@ -293,6 +293,14 @@ def main():
         model.transformer.wte.new_embed._load_from_state_dict(
                 {"weight": state_dict["transformer.wte.new_embed.weight"]}, "", None, True, [], [], "")
 
+    num_param_all = 0
+    num_param_tunable = 0
+    for p in model.parameters():
+        num_param_all += p.numel()
+        if p.requires_grad:
+            num_param_tunable += p.numel()
+    print("all params number:{}, tunable params number:{}, \
+        tunable params rate:{}".format(num_param_all, num_param_tunable, num_param_tunable/num_param_all))
 
     if config.model_type in ["bert", "roberta", "distilbert", "camembert"] and not data_args.mlm:
         raise ValueError(

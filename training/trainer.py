@@ -72,18 +72,6 @@ class ContrastiveTrainer(Trainer):
             loss = F.relu(F_minimize - F_maximize + self.args.margin)
         elif self.args.loss_type == 2:
             loss = - self.args.loss_alpha * F_maximize + self.args.loss_beta * F.relu(F_minimize - F_maximize + self.args.margin)
-        elif self.args.loss_type == 3:
-            prob = random.uniform(0, 1)
-            if prob > 0.5:
-                loss = - F_maximize 
-            else:
-                loss = F.relu(F_minimize - F_maximize + self.args.margin)
-        elif self.args.loss_type == 4: 
-            print(self.state.global_step)
-            if int(self.state.global_step/100)%2==0:
-                loss = - F_maximize 
-            else:
-                loss = F.relu(F_minimize - F_maximize + self.args.margin)
         else:
             raise NotImplementedError
             

@@ -46,7 +46,6 @@ class PerspectiveAPI:
 
     '''
     def request(self, texts: Union[str, List[str]]) -> List[Tuple[Optional[Dict[str, Any]], Optional[HttpError]]]:
-        print("next_uid:{}".format(self.next_uid))
         if isinstance(texts, str):
             texts = [texts]
         # Rate limit to 1 batch request per second
@@ -82,7 +81,6 @@ class PerspectiveAPI:
 
     
     def request(self, texts: Union[str, List[str]]) -> List[Tuple[Optional[Dict[str, Any]], Optional[HttpError]]]:
-        print("next_uid:{}".format(self.next_uid))
         if isinstance(texts, str):
             texts = [texts]
 
