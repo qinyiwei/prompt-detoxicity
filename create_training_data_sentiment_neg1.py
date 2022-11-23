@@ -42,19 +42,20 @@ def save_part_file(SCORES, generations, output_dir, rate=None, num=None):
     # Save evaluation file
     if rate is not None and num is None:
         output_file = output_dir / \
-            'negativity_gte99_most_neg_rate_{}.txt'.format(rate)
+            'negativity_gte99_whole_most_neg_rate_{}.txt'.format(rate)
         with open(output_file, 'w') as fo:
             for gen in sorted_gens[:int(len(generations)*rate/100)]:
                 fo.write(gen+'\n')
     elif num is not None and rate is None:
         output_file = output_dir / \
-            'negativity_gte99_most_neg_num_{}.txt'.format(num)
+            'negativity_gte99_whole_most_neg_num_{}.txt'.format(num)
         with open(output_file, 'w') as fo:
             for gen in sorted_gens[:num]:
                 fo.write(gen+'\n')
     elif num is not None and rate is not None:
         output_file = output_dir / \
-            'negativity_gte99_most_neg_rate_{}_num_{}.txt'.format(rate, num)
+            'negativity_gte99_whole_most_neg_rate_{}_num_{}.txt'.format(
+                rate, num)
         filtered_gens = sorted_gens[:int(len(generations)*rate/100)]
         random.seed(0)
         mini_indices = random.sample(
@@ -82,7 +83,7 @@ def main(rates: int, nums: int):
     output_dir = Path(output_dir)
     batch_size = 128
 
-    generations_file = output_dir / 'negativity_gte99_num_all.txt'
+    generations_file = output_dir / 'negativity_gte99_whole.txt'
 
     f = open(generations_file, 'r')
     generations = [line for line in f.read().splitlines() if (

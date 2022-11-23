@@ -6,6 +6,7 @@ import click
 from utils.utils import load_cache
 import torch.utils.data as data
 from training.run_pplm_discrim_train import load_discriminator, collate_fn
+import random
 
 
 class Dataset(data.Dataset):
@@ -34,19 +35,53 @@ class Dataset(data.Dataset):
         return data
 
 
+def save_part_file(SCORES, generations, output_dir, rate=None, num=None):
+    sorted_gens = [x for _, x in sorted(zip(SCORES, generations))]
+
+    # Save evaluation file
+    if rate is not None and num is None:
+        output_file = output_dir / \
+            'positivity_gte99_most_pos_rate_{}.txt'.format(rate)
+        with open(output_file, 'w') as fo:
+            for gen in sorted_gens[:int(len(generations)*rate/100)]:
+                fo.write(gen+'\n')
+    elif num is not None and rate is None:
+        output_file = output_dir / \
+            'positivity_gte99_most_pos_num_{}.txt'.format(num)
+        with open(output_file, 'w') as fo:
+            for gen in sorted_gens[:num]:
+                fo.write(gen+'\n')
+    elif num is not None and rate is not None:
+        output_file = output_dir / \
+            'positivity_gte99_most_pos_rate_{}_num_{}.txt'.format(rate, num)
+        filtered_gens = sorted_gens[:int(len(generations)*rate/100)]
+        random.seed(0)
+        mini_indices = random.sample(
+            list(range(len(filtered_gens))), min(num, len(filtered_gens)))
+        filtered_gens = [filtered_gens[index] for index in mini_indices]
+        with open(output_file, 'w') as fo:
+            for gen in filtered_gens[:num]:
+                fo.write(gen+'\n')
+    print("rate is:")
+    print(rate)
+    print("num is:")
+    print(num)
+    print("save positive texts to {}".format(output_file))
+
+
 @click.command()
-@click.option('--rate', required=True, type=int, help='')
-def main(rate: int):
+@click.option('--rates', required=False, multiple=True, type=int, help='')
+@click.option('--nums', required=False, multiple=True, type=int, help='')
+def main(rates: int, nums: int):
     weights_path = "/projects/tir4/users/yiweiq/toxicity/prompt-detoxicity/models/pplm_classifiers/sentiment_classifierhead_1280/SST_classifier_head_epoch_10.pt"
     meta_path = "/projects/tir4/users/yiweiq/toxicity/prompt-detoxicity/models/pplm_classifiers/sentiment_classifierhead_1280/SST_classifier_head_meta.json"
 
     # Create output files
     output_dir = '/projects/tir4/users/yiweiq/toxicity/dataset/DExperts/datasets/openwebtext/'
     output_dir = Path(output_dir)
-    batch_size = 32
+    batch_size = 64
 
-    generations_file = output_dir / 'positivity_gte99.txt'
-    output_file = output_dir / 'positivity_gte99_most_pos_{}.txt'.format(rate)
+    generations_file = output_dir / 'positivity_gte99_num_all.txt'
 
     f = open(generations_file, 'r')
     generations = [line for line in f.read().splitlines() if (
@@ -80,14 +115,17 @@ def main(rate: int):
     torch.cuda.empty_cache()
     print('Finished generation and evluation!')
 
-    sorted_gens = [x for _, x in sorted(zip(SCORES, generations))]
-
-    # Save evaluation file
-    with open(output_file, 'w') as fo:
-        for gen in sorted_gens[:int(len(generations)*rate/100)]:
-            fo.write(gen+'\n')
-
-    print("save {} percent safe texts to {}".format(rate, output_file))
+    if len(rates) != 0 and len(nums) == 0:
+        for rate in rates:
+            save_part_file(SCORES, generations, output_dir, rate=rate)
+    elif len(nums) != 0 and len(rates) == 0:
+        for num in nums:
+            save_part_file(SCORES, generations, output_dir, num=num)
+    elif len(nums) != 0 and len(rates) != 0:
+        for num in nums:
+            for rate in rates:
+                save_part_file(SCORES, generations,
+                               output_dir, num=num, rate=rate)
 
 
 if __name__ == '__main__':

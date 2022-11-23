@@ -1,4 +1,4 @@
-from transformers import  Trainer
+from transformers import Trainer
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
@@ -12,21 +12,24 @@ from transformers.file_utils import WEIGHTS_NAME
 
 logger = logging.get_logger(__name__)
 
+
 class ContrastiveTrainer(Trainer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.score_fct = nn.NLLLoss(reduction='none', ignore_index=self.model.config.pad_token_id)
+        self.score_fct = nn.NLLLoss(
+            reduction='none', ignore_index=self.model.config.pad_token_id)
         #self.lsm = nn.LogSoftmax(dim=1)
         #self.loss = nn.MarginRankingLoss(margin=self.args.margin)
         self.loss_gpt = torch.nn.CrossEntropyLoss(reduction="none")
-        self.loss_t5 = nn.NLLLoss(reduction='none', ignore_index=self.model.config.pad_token_id)
+        self.loss_t5 = nn.NLLLoss(
+            reduction='none', ignore_index=self.model.config.pad_token_id)
         self.lsm = nn.LogSoftmax(dim=1)
 
     def cal_loss_GPT2(self, model, input_ids, attention_mask, token_type_ids,
-              labels):
+                      labels):
 
-        outputs = model(input_ids=input_ids, 
-            attention_mask=attention_mask)
+        outputs = model(input_ids=input_ids,
+                        attention_mask=attention_mask)
         logits = outputs.logits[..., :-1, :].contiguous()
 
         if labels is None:
@@ -35,20 +38,20 @@ class ContrastiveTrainer(Trainer):
         label_mask = token_type_ids[..., 1:].contiguous()
 
         losses = self.loss_gpt(logits.view(-1, logits.size(-1)),
-                        labels.view(-1)) # [batch_size, length]
+                               labels.view(-1))  # [batch_size, length]
         losses = losses.view(logits.size(0), logits.size(1)) * label_mask
         return torch.sum(losses, axis=1) / torch.sum(label_mask, axis=1)
 
     def cal_loss_T5(self, model, input_ids, attention_mask, decoder_input_ids, labels):
-        outputs = model(input_ids=input_ids, 
-            attention_mask=attention_mask, 
-            decoder_input_ids=decoder_input_ids, 
-            labels=labels)
+        outputs = model(input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        decoder_input_ids=decoder_input_ids,
+                        labels=labels)
 
         tgt_len = attention_mask.sum(dim=1)
         tgt_tokens = labels
         logits = outputs.logits.view(-1, self.model.config.vocab_size)
-        
+
         losses = self.loss_t5(self.lsm(logits), tgt_tokens.view(-1))
         losses = losses.view(tgt_tokens.shape[0], -1)
         losses = losses.sum(dim=1) / tgt_len
@@ -62,24 +65,30 @@ class ContrastiveTrainer(Trainer):
         Subclass and override for custom behavior.
         """
         if not self.args.is_T5:
-            F_maximize = -self.cal_loss_GPT2(model, inputs['input_ids_maxi'], inputs['attention_mask_maxi'], inputs['token_type_ids_maxi'], inputs['labels_maxi'])
-            F_minimize = -self.cal_loss_GPT2(model, inputs['input_ids_mini'], inputs['attention_mask_mini'], inputs['token_type_ids_mini'], inputs['labels_mini'])
+            F_maximize = -self.cal_loss_GPT2(model, inputs['input_ids_maxi'],
+                                             inputs['attention_mask_maxi'], inputs['token_type_ids_maxi'], inputs['labels_maxi'])
+            F_minimize = -self.cal_loss_GPT2(model, inputs['input_ids_mini'],
+                                             inputs['attention_mask_mini'], inputs['token_type_ids_mini'], inputs['labels_mini'])
         else:
-            F_maximize = -self.cal_loss_T5(model, inputs['input_ids_maxi'], inputs['attention_mask_maxi'], inputs['decoder_input_ids_maxi'], inputs['labels_maxi'])
-            F_minimize = -self.cal_loss_T5(model, inputs['input_ids_mini'], inputs['attention_mask_mini'], inputs['decoder_input_ids_mini'], inputs['labels_mini'])
+            F_maximize = -self.cal_loss_T5(model, inputs['input_ids_maxi'], inputs['attention_mask_maxi'],
+                                           inputs['decoder_input_ids_maxi'], inputs['labels_maxi'])
+            F_minimize = -self.cal_loss_T5(model, inputs['input_ids_mini'], inputs['attention_mask_mini'],
+                                           inputs['decoder_input_ids_mini'], inputs['labels_mini'])
 
         if self.args.loss_type == 1:
             loss = F.relu(F_minimize - F_maximize + self.args.margin)
         elif self.args.loss_type == 2:
-            loss = - self.args.loss_alpha * F_maximize + self.args.loss_beta * F.relu(F_minimize - F_maximize + self.args.margin)
+            loss = - self.args.loss_alpha * F_maximize + self.args.loss_beta * \
+                F.relu(F_minimize - F_maximize +
+                       self.args.margin * inputs['scores'])
         else:
             raise NotImplementedError
-            
+
         loss = loss.mean()
-        #print("loss:{}".format(loss))
-        #print("F_maximize:{}".format(F_maximize.mean()))
-        #print("F_minimize:{}".format(F_minimize.mean()))
-        
+        # print("loss:{}".format(loss))
+        # print("F_maximize:{}".format(F_maximize.mean()))
+        # print("F_minimize:{}".format(F_minimize.mean()))
+
         return loss
 
     def create_optimizer_and_scheduler(self, num_training_steps: int):
@@ -92,10 +101,13 @@ class ContrastiveTrainer(Trainer):
         if self.optimizer is None:
             no_decay = ["bias", "LayerNorm.weight"]
 
-            p1 = [n for n, p in self.model.named_parameters() if 'new_embed' in n and not any(nd in n for nd in no_decay)]
-            p2 = [n for n, p in self.model.named_parameters() if 'new_embed' in n and any(nd in n for nd in no_decay)]
-            p3 = [n for n, p in self.model.named_parameters() if 'new_embed' not in n and not any(nd in n for nd in no_decay)]
-            
+            p1 = [n for n, p in self.model.named_parameters(
+            ) if 'new_embed' in n and not any(nd in n for nd in no_decay)]
+            p2 = [n for n, p in self.model.named_parameters(
+            ) if 'new_embed' in n and any(nd in n for nd in no_decay)]
+            p3 = [n for n, p in self.model.named_parameters(
+            ) if 'new_embed' not in n and not any(nd in n for nd in no_decay)]
+
             optimizer_grouped_parameters = [
                 {
                     "params": [p for n, p in self.model.named_parameters() if 'new_embed' in n],
@@ -123,7 +135,8 @@ class ContrastiveTrainer(Trainer):
             optimizer_cls = Adafactor if self.args.adafactor else AdamW
             if self.args.adafactor:
                 optimizer_cls = Adafactor
-                optimizer_kwargs = {"scale_parameter": False, "relative_step": False}
+                optimizer_kwargs = {
+                    "scale_parameter": False, "relative_step": False}
             else:
                 optimizer_cls = AdamW
                 optimizer_kwargs = {
@@ -132,7 +145,8 @@ class ContrastiveTrainer(Trainer):
                 }
             optimizer_kwargs["lr"] = self.args.learning_rate
 
-            self.optimizer = optimizer_cls(optimizer_grouped_parameters, **optimizer_kwargs)
+            self.optimizer = optimizer_cls(
+                optimizer_grouped_parameters, **optimizer_kwargs)
 
         if self.lr_scheduler is None:
             self.lr_scheduler = get_scheduler(
@@ -141,7 +155,7 @@ class ContrastiveTrainer(Trainer):
                 num_warmup_steps=self.args.warmup_steps,
                 num_training_steps=num_training_steps,
             )
-    
+
     def _save(self, output_dir: Optional[str] = None):
         output_dir = output_dir if output_dir is not None else self.args.output_dir
         os.makedirs(output_dir, exist_ok=True)

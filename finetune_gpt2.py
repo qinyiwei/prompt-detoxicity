@@ -69,7 +69,8 @@ class ModelArguments:
     )
     model_type: Optional[str] = field(
         default=None,
-        metadata={"help": "If training from scratch, pass a model type from the list: " + ", ".join(MODEL_TYPES)},
+        metadata={
+            "help": "If training from scratch, pass a model type from the list: " + ", ".join(MODEL_TYPES)},
     )
     config_name: Optional[str] = field(
         default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
@@ -99,6 +100,7 @@ class ModelArguments:
         metadata={"help": "dropout rate"},
     )
 
+
 @dataclass
 class DataTrainingArguments:
     """
@@ -114,13 +116,21 @@ class DataTrainingArguments:
     train_data_file_safe: Optional[str] = field(
         default=None, metadata={"help": "The input training data file (a text file)."}
     )
+    train_dataset: Optional[str] = field(
+        default=None, metadata={"help": ""}
+    )
+    mid_th: Optional[float] = field(
+        default=2, metadata={"help": ""}
+    )
     eval_data_file: Optional[str] = field(
         default=None,
-        metadata={"help": "An optional input evaluation data file to evaluate the perplexity on (a text file)."},
+        metadata={
+            "help": "An optional input evaluation data file to evaluate the perplexity on (a text file)."},
     )
     line_by_line: bool = field(
         default=False,
-        metadata={"help": "Whether distinct lines of text in the dataset are to be handled as distinct sequences."},
+        metadata={
+            "help": "Whether distinct lines of text in the dataset are to be handled as distinct sequences."},
     )
 
     mlm: bool = field(
@@ -147,13 +157,13 @@ class DataTrainingArguments:
     )
     margin: Optional[float] = field(
         default=1, metadata={"help": "brio loss margin"}
-    ) 
+    )
     loss_beta: Optional[float] = field(
         default=1, metadata={"help": ""}
-    ) 
+    )
     loss_alpha: Optional[float] = field(
         default=1, metadata={"help": ""}
-    )       
+    )
     loss_type: Optional[int] = field(
         default=1, metadata={"help": "which addiongal tuning strategies to use, possible choices: 1|2"}
     )
@@ -162,23 +172,26 @@ class DataTrainingArguments:
     )
     learning_rate_LM: Optional[float] = field(
         default=5e-5, metadata={"help": "learning rate for language model."}
-    ) 
+    )
+
 
 def get_dataset(args: DataTrainingArguments, tokenizer: PreTrainedTokenizer, evaluate=False):
     if args.line_by_line:
         if args.dataset_type == 'text':
-            return LineByLineTextDataset(tokenizer=tokenizer, 
-                file_path=args.eval_data_file if evaluate else args.train_data_file, block_size=args.block_size)
+            return LineByLineTextDataset(tokenizer=tokenizer,
+                                         file_path=args.eval_data_file if evaluate else args.train_data_file, block_size=args.block_size)
         elif args.dataset_type == 'single_attribute':
-            return SingleAttributeLineByLineTextDataset(tokenizer=tokenizer, 
-                file_path_toxicity=args.train_data_file_toxicity, 
-                file_path_safe=args.train_data_file_safe)
+            return SingleAttributeLineByLineTextDataset(tokenizer=tokenizer,
+                                                        file_path_toxicity=args.train_data_file_toxicity,
+                                                        file_path_safe=args.train_data_file_safe,
+                                                        dataset_name=args.train_dataset,
+                                                        mid_th=args.mid_th)
         else:
             raise NotImplementedError
     else:
         return TextDataset(
-            tokenizer=tokenizer, 
-            file_path=args.eval_data_file if evaluate else args.train_data_file, 
+            tokenizer=tokenizer,
+            file_path=args.eval_data_file if evaluate else args.train_data_file,
             block_size=args.block_size, overwrite_cache=args.overwrite_cache
         )
 
@@ -188,7 +201,8 @@ def main():
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
 
-    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
+    parser = HfArgumentParser(
+        (ModelArguments, DataTrainingArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
     training_args.margin = data_args.margin
@@ -220,7 +234,8 @@ def main():
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
-        level=logging.INFO if training_args.local_rank in [-1, 0] else logging.WARN,
+        level=logging.INFO if training_args.local_rank in [
+            -1, 0] else logging.WARN,
     )
     logger.warning(
         "Process rank: %s, device: %s, n_gpu: %s, distributed training: %s, 16-bits training: %s",
@@ -242,26 +257,33 @@ def main():
     # download model & vocab.
 
     if model_args.config_name:
-        config = AutoConfig.from_pretrained(model_args.config_name, cache_dir=model_args.cache_dir)
+        config = AutoConfig.from_pretrained(
+            model_args.config_name, cache_dir=model_args.cache_dir)
     elif model_args.model_name_or_path:
-        config = AutoConfig.from_pretrained(model_args.model_name_or_path, cache_dir=model_args.cache_dir)
+        config = AutoConfig.from_pretrained(
+            model_args.model_name_or_path, cache_dir=model_args.cache_dir)
     else:
         config = CONFIG_MAPPING[model_args.model_type]()
-        logger.warning("You are instantiating a new config instance from scratch.")
-    setattr(config,'dropout_rate',model_args.dropout_rate)
+        logger.warning(
+            "You are instantiating a new config instance from scratch.")
+    setattr(config, 'dropout_rate', model_args.dropout_rate)
 
     if model_args.tokenizer_name:
         if model_args.model_type == 'gpt2':
-            tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name, pad_token="<|endoftext|>", cache_dir=model_args.cache_dir)
+            tokenizer = AutoTokenizer.from_pretrained(
+                model_args.tokenizer_name, pad_token="<|endoftext|>", cache_dir=model_args.cache_dir)
         else:
-            tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name, cache_dir=model_args.cache_dir)
+            tokenizer = AutoTokenizer.from_pretrained(
+                model_args.tokenizer_name, cache_dir=model_args.cache_dir)
     elif model_args.model_name_or_path:
         if model_args.model_type == 'gpt2':
-            tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path, pad_token="<|endoftext|>", cache_dir=model_args.cache_dir)
-            #assert self.tokenizer.eos_token_id == self.tokenizer.pad_token_id
-            #tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+            tokenizer = AutoTokenizer.from_pretrained(
+                model_args.model_name_or_path, pad_token="<|endoftext|>", cache_dir=model_args.cache_dir)
+            # assert self.tokenizer.eos_token_id == self.tokenizer.pad_token_id
+            # tokenizer.add_special_tokens({'pad_token': '[PAD]'})
         else:
-            tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path, cache_dir=model_args.cache_dir)
+            tokenizer = AutoTokenizer.from_pretrained(
+                model_args.model_name_or_path, cache_dir=model_args.cache_dir)
     else:
         raise ValueError(
             "You are instantiating a new tokenizer from scratch. This is not supported, but you can do it from another script, save it,"
@@ -281,17 +303,19 @@ def main():
 
     if model_args.freeze_LM:
         freeze_LM(model)
-    #model.resize_token_embeddings(len(tokenizer))
+    # model.resize_token_embeddings(len(tokenizer))
 
     if model_args.add_tuning == 'prompt_tuning':
-        set_extra_embeddings(model, model_args.n_prefix, data_args.n_class, is_T5 = model_args.is_T5)
+        set_extra_embeddings(model, model_args.n_prefix,
+                             data_args.n_class, is_T5=model_args.is_T5)
 
     if model_args.model_name_or_path is not None and os.path.isdir(model_args.model_name_or_path):
-        state_dict = torch.load(model_args.model_name_or_path+"/pytorch_model.bin")
+        state_dict = torch.load(
+            model_args.model_name_or_path+"/pytorch_model.bin")
         model.transformer.wte.embed._load_from_state_dict(
-                {"weight": state_dict["transformer.wte.embed.weight"]}, "", None, True, [], [], "")
+            {"weight": state_dict["transformer.wte.embed.weight"]}, "", None, True, [], [], "")
         model.transformer.wte.new_embed._load_from_state_dict(
-                {"weight": state_dict["transformer.wte.new_embed.weight"]}, "", None, True, [], [], "")
+            {"weight": state_dict["transformer.wte.new_embed.weight"]}, "", None, True, [], [], "")
 
     num_param_all = 0
     num_param_tunable = 0
@@ -312,19 +336,22 @@ def main():
         data_args.block_size = tokenizer.model_max_length
         # Our input block size will be the max possible for the model
     else:
-        data_args.block_size = min(data_args.block_size, tokenizer.model_max_length)
+        data_args.block_size = min(
+            data_args.block_size, tokenizer.model_max_length)
 
     # Get datasets
 
-    train_dataset = get_dataset(data_args, tokenizer=tokenizer) if training_args.do_train else None
-    eval_dataset = get_dataset(data_args, tokenizer=tokenizer, evaluate=True) if training_args.do_eval else None
+    train_dataset = get_dataset(
+        data_args, tokenizer=tokenizer) if training_args.do_train else None
+    eval_dataset = get_dataset(
+        data_args, tokenizer=tokenizer, evaluate=True) if training_args.do_eval else None
     if model_args.add_tuning is None:
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=tokenizer, mlm=data_args.mlm, mlm_probability=data_args.mlm_probability
         )
     elif model_args.add_tuning == 'prompt_tuning':
         data_collator = SingleAttributeDataCollator(
-            tokenizer=tokenizer, data_args = data_args, n_class = data_args.n_class, n_prefix = model_args.n_prefix
+            tokenizer=tokenizer, data_args=data_args, n_class=data_args.n_class, n_prefix=model_args.n_prefix
         )
     else:
         raise NotImplementedError
@@ -350,23 +377,23 @@ def main():
         )
     else:
         raise NotImplementedError
-        
 
     # Training
     if training_args.do_train:
-        #model_path = (
+        # model_path = (
         #    model_args.model_name_or_path
         #    if model_args.model_name_or_path is not None and os.path.isdir(model_args.model_name_or_path)
         #    else None
-        #)
-        #trainer.train(model_path=model_path)
+        # )
+        # trainer.train(model_path=model_path)
         trainer.train()
 
         trainer.save_model()
 
         if trainer.is_world_process_zero():
             # Need to save the state, since Trainer.save_model saves only the tokenizer with the model
-            trainer.state.save_to_json(os.path.join(training_args.output_dir, "trainer_state.json"))
+            trainer.state.save_to_json(os.path.join(
+                training_args.output_dir, "trainer_state.json"))
 
             # For convenience, we also re-save the tokenizer to the same directory,
             # so that you can share your model easily on huggingface.co/models =)
@@ -382,7 +409,8 @@ def main():
         perplexity = math.exp(eval_output["eval_loss"])
         result = {"perplexity": perplexity}
 
-        output_eval_file = os.path.join(training_args.output_dir, "eval_results_lm.txt")
+        output_eval_file = os.path.join(
+            training_args.output_dir, "eval_results_lm.txt")
         if trainer.is_world_process_zero():
             with open(output_eval_file, "w") as writer:
                 logger.info("***** Eval results *****")
