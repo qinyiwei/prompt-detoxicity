@@ -22,6 +22,12 @@ DEBIASING_PREFIXES = [
     "The following text contains negative or hateful language targeting someone because of their identity:\n",
     "The following text contains swear words, curse words, or other obscene or profane language:\n"
 ]
+TOPICS = ["computers", "legal", "military",
+          "politics", "religion", "science", "space"]
+TOPICS = sorted(TOPICS)
+TOPICS_INCLUDE_OTHER = ["computers", "legal", "military",
+                        "politics", "religion", "science", "space", "other"]
+TOPICS_INCLUDE_OTHER = sorted(TOPICS_INCLUDE_OTHER)
 
 
 @click.command()
@@ -50,9 +56,11 @@ DEBIASING_PREFIXES = [
 @click.option('--number', type=int, default=None)
 @click.option('--generate-safe', default=True, type=bool, help="generate safe texts or toxicity text")
 @click.option('--use-debias-prefixes-all', default=False, type=bool, help="whether to use all 6 debias prefixes")
+@click.option('--topic', type=str, default=None)
+@click.option('--topic-include-other', default=False, type=bool)
 def main(output_dir: str, dataset_file: Optional[str], model: str, orig_model: str, model_type: str, n: int, max_tokens: int, batch_size: int,
          top_p: float, top_k: int, num_beams: int, do_sample: bool, decay_constant: int, tuning_type: str,
-         n_prefix: int, n_class: int, number: int, generate_safe: bool, use_debias_prefixes_all: bool):
+         n_prefix: int, n_class: int, number: int, generate_safe: bool, use_debias_prefixes_all: bool, topic: str, topic_include_other: bool):
     # Load prompts from dataset file
     if dataset_file.endswith('.jsonl'):
         dataset = pd.read_json(dataset_file, lines=True)
@@ -60,7 +68,7 @@ def main(output_dir: str, dataset_file: Optional[str], model: str, orig_model: s
     else:
         f_prompts = open(dataset_file, 'r')
         # 1
-        prompts = f_prompts.readlines()
+        prompts = [p.replace("\n", "") for p in f_prompts.readlines()]
         # 2
         #prompts = [p[7:] for p in prompts]
         # 3
@@ -78,8 +86,12 @@ def main(output_dir: str, dataset_file: Optional[str], model: str, orig_model: s
     output_dir = Path(output_dir)
     model_name = model.split('/')[-2]+"_"+model.split('/')[-1] \
         if 'checkpoint' in model.split('/')[-1] else model.split('/')[-1]
-    generations_file = output_dir / \
-        f'{model_type}_{model_name}_{"safe" if generate_safe else "toxicity"}_generations.jsonl'
+    if topic is None:
+        generations_file = output_dir / \
+            f'{model_type}_{model_name}_{"safe" if generate_safe else "toxicity"}_generations.jsonl'
+    else:
+        generations_file = output_dir / \
+            f'{model_type}_{model_name}_{topic}_generations.jsonl'
     print("generation file:{}".format(generations_file))
     # don't overwrite generations!
     assert not os.path.exists(generations_file)
@@ -103,18 +115,28 @@ def main(output_dir: str, dataset_file: Optional[str], model: str, orig_model: s
             out_file=generations_file
         )
     elif model_type.startswith("gpt2_prompt"):
-        if model_type == 'gpt2_prompt_fixed':
-            add_params = PATTERNS_generative_LM['safe'] if generate_safe else PATTERNS_generative_LM['toxicity']
-        elif model_type == 'gpt2_prompt_tunable':
-            assert tuning_type == "prompt_tuning"
-            add_tokens_safe = ["<CLS_{}_TOK_{}>".format(str(0), str(i).zfill(2))
-                               for i in range(n_prefix)]
-            add_tokens_toxicity = ["<CLS_{}_TOK_{}>".format(str(1), str(i).zfill(2))
+        if topic is None:
+            if model_type == 'gpt2_prompt_fixed':
+                add_params = PATTERNS_generative_LM['safe'] if generate_safe else PATTERNS_generative_LM['toxicity']
+            elif model_type == 'gpt2_prompt_tunable':
+                assert tuning_type == "prompt_tuning"
+                add_tokens_safe = ["<CLS_{}_TOK_{}>".format(str(0), str(i).zfill(2))
                                    for i in range(n_prefix)]
-            add_params = "".join(
-                add_tokens_safe if generate_safe else add_tokens_toxicity)
+                add_tokens_toxicity = ["<CLS_{}_TOK_{}>".format(str(1), str(i).zfill(2))
+                                       for i in range(n_prefix)]
+                add_params = "".join(
+                    add_tokens_safe if generate_safe else add_tokens_toxicity)
+            else:
+                raise NotImplementedError
         else:
-            raise NotImplementedError
+            assert model_type == 'gpt2_prompt_tunable'
+            if topic_include_other:
+                add_tokens = ["<CLS_{}_TOK_{}>".format(str(TOPICS_INCLUDE_OTHER.index(topic)), str(i).zfill(2))
+                              for i in range(n_prefix)]
+            else:
+                add_tokens = ["<CLS_{}_TOK_{}>".format(str(TOPICS.index(topic)), str(i).zfill(2))
+                              for i in range(n_prefix)]
+            add_params = "".join(add_tokens)
         generations_iter = gpt2_prompt(
             prompts=prompts,
             add_params=add_params,

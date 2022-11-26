@@ -28,7 +28,7 @@ from typing import Optional
 
 from modeling.modeling_add import set_extra_embeddings, freeze_LM
 from training.trainer import ContrastiveTrainer
-from utils.data import SingleAttributeDataCollator, SingleAttributeLineByLineTextDataset
+from utils.data import SingleAttributeDataCollator, MultiAttributeDataCollator, SingleAttributeDataset, MultiAttributeDataset
 import torch
 
 from transformers import (
@@ -108,7 +108,10 @@ class DataTrainingArguments:
     """
 
     train_data_file: Optional[str] = field(
-        default=None, metadata={"help": "The input training data file (a text file)."}
+        default=None, metadata={"help": "The name of training data (could be loaded from huggingface dataset)."}
+    )
+    train_data_dir: Optional[str] = field(
+        default=None, metadata={"help": "The input training data dir (include multiple training files)."}
     )
     train_data_file_toxicity: Optional[str] = field(
         default=None, metadata={"help": "The input training data file (a text file)."}
@@ -168,7 +171,7 @@ class DataTrainingArguments:
         default=1, metadata={"help": "which addiongal tuning strategies to use, possible choices: 1|2"}
     )
     dataset_type: Optional[str] = field(
-        default='text', metadata={"help": "which addiongal tuning strategies to use, possible choices: text|single_attribute"}
+        default='text', metadata={"help": "which addiongal tuning strategies to use, possible choices: text|single_attribute|multi_attribute"}
     )
     learning_rate_LM: Optional[float] = field(
         default=5e-5, metadata={"help": "learning rate for language model."}
@@ -181,11 +184,14 @@ def get_dataset(args: DataTrainingArguments, tokenizer: PreTrainedTokenizer, eva
             return LineByLineTextDataset(tokenizer=tokenizer,
                                          file_path=args.eval_data_file if evaluate else args.train_data_file, block_size=args.block_size)
         elif args.dataset_type == 'single_attribute':
-            return SingleAttributeLineByLineTextDataset(tokenizer=tokenizer,
-                                                        file_path_toxicity=args.train_data_file_toxicity,
-                                                        file_path_safe=args.train_data_file_safe,
-                                                        dataset_name=args.train_dataset,
-                                                        mid_th=args.mid_th)
+            return SingleAttributeDataset(tokenizer=tokenizer,
+                                          file_path_toxicity=args.train_data_file_toxicity,
+                                          file_path_safe=args.train_data_file_safe,
+                                          dataset_name=args.train_dataset,
+                                          mid_th=args.mid_th)
+        elif args.dataset_type == 'multi_attribute':
+            return MultiAttributeDataset(tokenizer=tokenizer,
+                                         file_path=args.train_data_dir)
         else:
             raise NotImplementedError
     else:
@@ -350,9 +356,14 @@ def main():
             tokenizer=tokenizer, mlm=data_args.mlm, mlm_probability=data_args.mlm_probability
         )
     elif model_args.add_tuning == 'prompt_tuning':
-        data_collator = SingleAttributeDataCollator(
-            tokenizer=tokenizer, data_args=data_args, n_class=data_args.n_class, n_prefix=model_args.n_prefix
-        )
+        if data_args.n_class == 2:
+            data_collator = SingleAttributeDataCollator(
+                tokenizer=tokenizer, data_args=data_args, n_class=data_args.n_class, n_prefix=model_args.n_prefix
+            )
+        else:
+            data_collator = MultiAttributeDataCollator(
+                tokenizer=tokenizer, data_args=data_args, n_class=data_args.n_class, n_prefix=model_args.n_prefix
+            )
     else:
         raise NotImplementedError
 

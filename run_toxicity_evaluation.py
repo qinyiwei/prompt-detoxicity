@@ -94,7 +94,7 @@ def main(output_dir: str, dataset_file: Optional[str], model: str, model_type: s
     else:
         f_prompts = open(dataset_file, 'r')
         # 1
-        prompts = f_prompts.readlines()
+        prompts = [p.replace("\n", "") for p in f_prompts.readlines()]
         # 2
         #prompts = [p[7:] for p in prompts]
         # 3
