@@ -81,7 +81,7 @@ class MultiAttributeDataset(Dataset):
     def __init__(self, tokenizer: PreTrainedTokenizer, file_path: str):
         self.examples = []
 
-        assert os.path.isdir(
+        assert os.path.isdir(file_path) or os.path.isfile(
             file_path), f"Input file path {file_path} not found"
         # Here, we do not cache the features, operating under the assumption
         # that we will soon use fast multithreaded tokenizers from the
@@ -91,14 +91,16 @@ class MultiAttributeDataset(Dataset):
         logger.info(
             "Creating features from dataset file at %s", file_path)
 
-        self.files = os.listdir(file_path)
-        self.files = sorted(self.files)
+        if os.path.isdir(file_path):
+            self.files = os.listdir(file_path)
+            self.files = sorted(self.files)
 
-        for id, file in enumerate(self.files):
-            # attribute = 0, safe
-            self.examples.extend(self._read_file(
-                os.path.join(file_path, file), attribute=id))
-
+            for id, file in enumerate(self.files):
+                # attribute = 0, safe
+                self.examples.extend(self._read_file(
+                    os.path.join(file_path, file), attribute=id))
+        else:
+            self.examples.extend(self._read_file(file_path, attribute=0))
         print(len(self.examples))
         self.tokenizer = tokenizer
 
@@ -328,8 +330,9 @@ class MultiAttributeDataCollator(AttributeDataCollator):
 
         batch.update(self.input_add_prefix(batch_orig, add_tokens_dict,
                                            name="maxi", is_T5=self.data_args.is_T5))
-        batch.update(self.input_add_prefix(batch_orig, add_tokens_dict,
-                                           name="mini", is_T5=self.data_args.is_T5))
+        if len(add_tokens_dict.keys()) > 1:
+            batch.update(self.input_add_prefix(batch_orig, add_tokens_dict,
+                                               name="mini", is_T5=self.data_args.is_T5))
 
         return batch
 
@@ -338,16 +341,16 @@ class MultiAttributeDataCollator(AttributeDataCollator):
         bs = input_ids.shape[0]
         attributes = batch_orig['attribute'].tolist()
         attributes_list = list(add_tokens_dict.keys())
-        attributes_not = []
-        for a in attributes:
-            attributes_list_others = attributes_list.copy()
-            attributes_list_others.remove(a)
-            attributes_not.append(random.choice(attributes_list_others))
 
         if name == "maxi":
             prefixes = [add_tokens_dict[attr] for attr in attributes]
             prefixes = torch.cat(prefixes, 0)
         if name == "mini":
+            attributes_not = []
+            for a in attributes:
+                attributes_list_others = attributes_list.copy()
+                attributes_list_others.remove(a)
+                attributes_not.append(random.choice(attributes_list_others))
             prefixes = [add_tokens_dict[attr] for attr in attributes_not]
             prefixes = torch.cat(prefixes, 0)
 

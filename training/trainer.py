@@ -67,16 +67,18 @@ class ContrastiveTrainer(Trainer):
         if not self.args.is_T5:
             F_maximize = -self.cal_loss_GPT2(model, inputs['input_ids_maxi'],
                                              inputs['attention_mask_maxi'], inputs['token_type_ids_maxi'], inputs['labels_maxi'])
-            F_minimize = -self.cal_loss_GPT2(model, inputs['input_ids_mini'],
-                                             inputs['attention_mask_mini'], inputs['token_type_ids_mini'], inputs['labels_mini'])
+            if "input_ids_mini" in inputs:
+                F_minimize = -self.cal_loss_GPT2(model, inputs['input_ids_mini'],
+                                                 inputs['attention_mask_mini'], inputs['token_type_ids_mini'], inputs['labels_mini'])
         else:
             F_maximize = -self.cal_loss_T5(model, inputs['input_ids_maxi'], inputs['attention_mask_maxi'],
                                            inputs['decoder_input_ids_maxi'], inputs['labels_maxi'])
-            F_minimize = -self.cal_loss_T5(model, inputs['input_ids_mini'], inputs['attention_mask_mini'],
-                                           inputs['decoder_input_ids_mini'], inputs['labels_mini'])
+            if "input_ids_mini" in inputs:
+                F_minimize = -self.cal_loss_T5(model, inputs['input_ids_mini'], inputs['attention_mask_mini'],
+                                               inputs['decoder_input_ids_mini'], inputs['labels_mini'])
 
         if self.args.loss_type == 1:
-            loss = F.relu(F_minimize - F_maximize + self.args.margin)
+            loss = - self.args.loss_alpha * F_maximize
         elif self.args.loss_type == 2:
             loss = - self.args.loss_alpha * F_maximize + self.args.loss_beta * \
                 F.relu(F_minimize - F_maximize +
@@ -101,12 +103,12 @@ class ContrastiveTrainer(Trainer):
         if self.optimizer is None:
             no_decay = ["bias", "LayerNorm.weight"]
 
-            p1 = [n for n, p in self.model.named_parameters(
-            ) if 'new_embed' in n and not any(nd in n for nd in no_decay)]
-            p2 = [n for n, p in self.model.named_parameters(
-            ) if 'new_embed' in n and any(nd in n for nd in no_decay)]
-            p3 = [n for n, p in self.model.named_parameters(
-            ) if 'new_embed' not in n and not any(nd in n for nd in no_decay)]
+            # p1 = [n for n, p in self.model.named_parameters(
+            # ) if 'new_embed' in n and not any(nd in n for nd in no_decay)]
+            # p2 = [n for n, p in self.model.named_parameters(
+            # ) if 'new_embed' in n and any(nd in n for nd in no_decay)]
+            # p3 = [n for n, p in self.model.named_parameters(
+            # ) if 'new_embed' not in n and not any(nd in n for nd in no_decay)]
 
             optimizer_grouped_parameters = [
                 {
@@ -125,12 +127,12 @@ class ContrastiveTrainer(Trainer):
                     "lr":self.args.learning_rate_LM,
                 },
             ]
-            print(p1)
-            print("lr is:{}".format(optimizer_grouped_parameters[0]["lr"]))
-            print(p2)
-            print("lr is:{}".format(optimizer_grouped_parameters[1]["lr"]))
-            print(p3)
-            print("lr is:{}".format(optimizer_grouped_parameters[2]["lr"]))
+            # print(p1)
+            #print("lr is:{}".format(optimizer_grouped_parameters[0]["lr"]))
+            # print(p2)
+            #print("lr is:{}".format(optimizer_grouped_parameters[1]["lr"]))
+            # print(p3)
+            #print("lr is:{}".format(optimizer_grouped_parameters[2]["lr"]))
 
             optimizer_cls = Adafactor if self.args.adafactor else AdamW
             if self.args.adafactor:
@@ -170,9 +172,9 @@ class ContrastiveTrainer(Trainer):
                 state_dict = self.model.state_dict()
             else:
                 if not self.args.is_T5:
-                    state_dict = self.model.transformer.wte.state_dict()
+                    state_dict = self.model.transformer.wte.new_embed.state_dict()
                 else:
-                    state_dict = self.model.shared.state_dict()
+                    state_dict = self.model.shared.new_embed.state_dict()
             torch.save(state_dict, os.path.join(output_dir, WEIGHTS_NAME))
 
         if self.tokenizer is not None and self.is_world_process_zero():

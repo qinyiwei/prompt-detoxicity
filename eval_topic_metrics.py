@@ -13,7 +13,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import AutoTokenizer, AutoModelWithLMHead, AutoModelForSequenceClassification
+from transformers import AutoTokenizer, AutoModelWithLMHead, AutoModelForSequenceClassification, AutoModelForCausalLM
 from pathlib import Path
 from typing import Optional
 
@@ -59,6 +59,32 @@ def perplexity(sentences, tokenizer, model, device='cuda'):
     return np.mean(ppl), np.std(ppl)
 
 
+def conditional_perplexity(prompts, sentences, tokenizer, model, device='cuda'):
+    # calculate conditional perplexity
+    with torch.no_grad():
+        perplexities = []
+        for prompt, sentence in tqdm(zip(prompts, sentences), total=len(sentences)):
+            prompt_input_ids = tokenizer.encode(
+                prompt, return_tensors='pt').to(device)
+            prompt_loss = model(prompt_input_ids, labels=prompt_input_ids)[
+                0] * (prompt_input_ids.shape[1]-1)
+            # for sentence conditioned on the prompt
+            assert sentence.startswith(prompt)
+            full_input_ids = tokenizer.encode(
+                sentence, return_tensors='pt').to(device)
+            full_loss = model(full_input_ids, labels=full_input_ids)[
+                0] * (full_input_ids.shape[1]-1)
+            loss = (full_loss - prompt_loss) / \
+                (full_input_ids.shape[1] - prompt_input_ids.shape[1])
+            ppl = math.exp(loss.item())
+            perplexities.append(ppl)
+            # if ppl < 1e4:   # for sanity
+            #    perplexities.append(ppl)
+        # print(perplexities)
+    return np.mean(perplexities), np.std(perplexities)
+    # return np.nanmean(perplexities)
+
+
 def grammaticality(sentences, tokenizer, model, device='cuda'):
     with torch.no_grad():
         total_good = 0
@@ -100,25 +126,28 @@ def distinctness(results):
 
 @click.command()
 @click.argument('output-dir')
-@click.option('--model', required=True, help='Equivalent to `model_name_or_path` in transformers.')
-@click.option('--model-type', required=True,
+@click.option('--model', required=False, help='Equivalent to `model_name_or_path` in transformers.')
+@click.option('--model-type', required=False,
               type=click.Choice(ALLOWED_MODELS))
 @click.option('--tw_dir', type=str, required=True, help='test wordlists')
+@click.option('--log_file', type=str, required=False, help='log file path')
 @click.option('--cap_per_example', type=int, required=False, default=None, help='max matches to count per sentence')
 @click.option('--device', type=str, required=False, default='cuda', help="choose from cpu|cuda")
-def main(output_dir: str, model: str, model_type: str, tw_dir: str, cap_per_example: int, device: str):
-
-    output_dir = Path(output_dir)
-    model_name = model.split('/')[-2]+"_"+model.split('/')[-1] \
-        if 'checkpoint' in model.split('/')[-1] else model.split('/')[-1]
-    log_file = output_dir / f'{model_type}_{model_name}_generations.jsonl'
+def main(output_dir: str, model: str, model_type: str, tw_dir: str, log_file: str, cap_per_example: int, device: str):
+    if log_file is None:
+        output_dir = Path(output_dir)
+        model_name = model.split('/')[-2]+"_"+model.split('/')[-1] \
+            if 'checkpoint' in model.split('/')[-1] else model.split('/')[-1]
+        log_file = output_dir / f'{model_type}_{model_name}_generations.jsonl'
     tw_topic_match_c_total = 0
     category_totals_c = defaultdict(lambda: 0)
     results = defaultdict(lambda: [])
+    results_prompt = defaultdict(lambda: [])
     with open(log_file, 'r') as rf:
         data = list(csv.DictReader(rf))
         for line in data:
             results[line['category']].append(line['generation'])
+            results_prompt[line['category']].append(line['input_text'])
 
     all_c_sents = []
     for category, condition_results in results.items():
@@ -127,6 +156,10 @@ def main(output_dir: str, model: str, model_type: str, tw_dir: str, cap_per_exam
         tw_topic_match_c_total += tw_topic_match_c
         category_totals_c[category] += tw_topic_match_c
         all_c_sents += condition_results
+
+    all_prompts = []
+    for category, input_text in results_prompt.items():
+        all_prompts += input_text
 
     print('Test wordlist matches (divide by num outputs to get the Success metric):',
           tw_topic_match_c_total)
@@ -151,12 +184,21 @@ def main(output_dir: str, model: str, model_type: str, tw_dir: str, cap_per_exam
     print('GPT perplexity:', perplexity(
         all_c_sents, eval_tokenizer, eval_model))
 
+    eval_tokenizer = AutoTokenizer.from_pretrained("gpt2-xl")
+    eval_model = AutoModelForCausalLM.from_pretrained("gpt2-xl").to(device)
+    eval_tokenizer.pad_token = eval_tokenizer.eos_token
+    eval_model.eval()
+    print('GPT2-xl perplexity:', conditional_perplexity(
+        all_prompts, all_c_sents, eval_tokenizer, eval_model))
+
+    '''
     eval_tokenizer = AutoTokenizer.from_pretrained('transfo-xl-wt103')
     eval_model = AutoModelWithLMHead.from_pretrained(
         'transfo-xl-wt103').to(device)
     eval_model.eval()
     print('TFXL perplexity:', perplexity(
         all_c_sents, eval_tokenizer, eval_model))
+    '''
 
 
 if __name__ == '__main__':

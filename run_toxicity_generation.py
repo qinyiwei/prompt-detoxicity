@@ -40,8 +40,9 @@ TOPICS_INCLUDE_OTHER = sorted(TOPICS_INCLUDE_OTHER)
               type=click.Choice(ALLOWED_MODELS))
 @click.option('--n', default=25, help='Number of samples to generate for each prompt. When used with --eos')
 @click.option('--max-tokens', default=20, help='Number of tokens (usually BPE) to generate for each prompt.')
+@click.option('--min-tokens', default=0, help='Number of tokens (usually BPE) to generate for each prompt.')
 @click.option('--batch-size', default=32)
-@click.option('--top_p', default=0.9, type=float,
+@click.option('--top_p', default=1.0, type=float,
               help='Only for sampling. If set, only the top_p tokens with the highest probabilities are considered.')
 @click.option('--top_k', default=0, type=int,
               help='Only for sampling. If set, only the top_k tokens with the highest probabilities are considered.')
@@ -57,10 +58,11 @@ TOPICS_INCLUDE_OTHER = sorted(TOPICS_INCLUDE_OTHER)
 @click.option('--generate-safe', default=True, type=bool, help="generate safe texts or toxicity text")
 @click.option('--use-debias-prefixes-all', default=False, type=bool, help="whether to use all 6 debias prefixes")
 @click.option('--topic', type=str, default=None)
+@click.option('--class-id', type=int, default=None)
 @click.option('--topic-include-other', default=False, type=bool)
-def main(output_dir: str, dataset_file: Optional[str], model: str, orig_model: str, model_type: str, n: int, max_tokens: int, batch_size: int,
+def main(output_dir: str, dataset_file: Optional[str], model: str, orig_model: str, model_type: str, n: int, max_tokens: int, min_tokens: int, batch_size: int,
          top_p: float, top_k: int, num_beams: int, do_sample: bool, decay_constant: int, tuning_type: str,
-         n_prefix: int, n_class: int, number: int, generate_safe: bool, use_debias_prefixes_all: bool, topic: str, topic_include_other: bool):
+         n_prefix: int, n_class: int, number: int, generate_safe: bool, use_debias_prefixes_all: bool, topic: str, class_id: int, topic_include_other: bool):
     # Load prompts from dataset file
     if dataset_file.endswith('.jsonl'):
         dataset = pd.read_json(dataset_file, lines=True)
@@ -104,6 +106,7 @@ def main(output_dir: str, dataset_file: Optional[str], model: str, orig_model: s
             prompts=prompts,
             add_params=None,
             max_len=max_tokens,
+            min_len=min_tokens,
             do_sample=do_sample,
             num_beams=num_beams,
             top_k=top_k,
@@ -130,17 +133,22 @@ def main(output_dir: str, dataset_file: Optional[str], model: str, orig_model: s
                 raise NotImplementedError
         else:
             assert model_type == 'gpt2_prompt_tunable'
-            if topic_include_other:
-                add_tokens = ["<CLS_{}_TOK_{}>".format(str(TOPICS_INCLUDE_OTHER.index(topic)), str(i).zfill(2))
-                              for i in range(n_prefix)]
+            if class_id is None:
+                if topic_include_other:
+                    add_tokens = ["<CLS_{}_TOK_{}>".format(str(TOPICS_INCLUDE_OTHER.index(topic)), str(i).zfill(2))
+                                  for i in range(n_prefix)]
+                else:
+                    add_tokens = ["<CLS_{}_TOK_{}>".format(str(TOPICS.index(topic)), str(i).zfill(2))
+                                  for i in range(n_prefix)]
             else:
-                add_tokens = ["<CLS_{}_TOK_{}>".format(str(TOPICS.index(topic)), str(i).zfill(2))
+                add_tokens = ["<CLS_{}_TOK_{}>".format(class_id, str(i).zfill(2))
                               for i in range(n_prefix)]
             add_params = "".join(add_tokens)
         generations_iter = gpt2_prompt(
             prompts=prompts,
             add_params=add_params,
             max_len=max_tokens,
+            min_len=min_tokens,
             do_sample=do_sample,
             num_beams=num_beams,
             top_k=top_k,
@@ -175,6 +183,7 @@ def main(output_dir: str, dataset_file: Optional[str], model: str, orig_model: s
         generations_iter = gpt2_debias(
             prompts=prompts,
             max_len=max_tokens,
+            min_len=min_tokens,
             min_length=None,
             do_sample=do_sample,
             num_beams=num_beams,

@@ -15,24 +15,25 @@ MAX_LENGTH = int(10000)  # Hardcoded max length to avoid infinite loop
 class GPT2Generation:
     STOP_TOKEN = "<|endoftext|>"
 
-    def __init__(self, model_name_or_path: Union[str, Path, GPT2PreTrainedModel] = 'gpt2', orig_model = None,
-            tokenizer_name_or_path: str = 'gpt2', seed: int = 42, tuning_type = None, n_prefix = 20, n_class = 2):
+    def __init__(self, model_name_or_path: Union[str, Path, GPT2PreTrainedModel] = 'gpt2', orig_model=None,
+                 tokenizer_name_or_path: str = 'gpt2', seed: int = 42, tuning_type=None, n_prefix=20, n_class=2):
         # Set up device
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu")
         n_gpu = torch.cuda.device_count()
         utils.set_seed(seed, n_gpu)
 
         # Set up model
-        prompt_only =  (orig_model is not None)
+        prompt_only = (orig_model is not None)
         if orig_model is None:
             orig_model = model_name_or_path
 
         if isinstance(orig_model, Path) or isinstance(orig_model, str):
             model = GPT2LMHeadModel.from_pretrained(str(orig_model))
-        
+
         if tuning_type == "prompt_tuning":
-            load_prompt_model(model, n_prefix, n_class, 
-                save_dir = model_name_or_path, prompt_only=prompt_only, is_T5 = False)
+            load_prompt_model(model, n_prefix, n_class,
+                              save_dir=model_name_or_path, prompt_only=prompt_only, is_T5=False)
         self.model = model.to(self.device)
 
         # Set up tokenizer
@@ -40,7 +41,8 @@ class GPT2Generation:
         # pad_token_id = 50256, which normally belongs to the <EOS> token_id in GPT2. This is a very ugly
         # way that works at the moment of setting the pad_token_id to the <EOS> token that is already
         # included in the vocab size.
-        self.tokenizer = GPT2Tokenizer.from_pretrained(tokenizer_name_or_path, pad_token=self.STOP_TOKEN)
+        self.tokenizer = GPT2Tokenizer.from_pretrained(
+            tokenizer_name_or_path, pad_token=self.STOP_TOKEN)
         assert self.tokenizer.eos_token_id == self.tokenizer.pad_token_id
 
     def __repr__(self):
@@ -53,12 +55,13 @@ class GPT2Generation:
                  prompt: Union[str, List[str]],
                  add_params: str = None,
                  max_len: int = 20,
+                 min_len: int = 0,
                  sample: bool = True,
                  top_k: int = 0,
                  top_p: float = 1.0,
                  temperature: float = 1.0,
                  **model_kwargs) -> List[str]:
-        #TODO: not support beam search
+        # TODO: not support beam search
         do_sample = model_kwargs.pop('do_sample')
         num_beams = model_kwargs.pop('num_beams')
 
@@ -68,27 +71,30 @@ class GPT2Generation:
         if add_params is not None:
             prompt = [add_params + p for p in prompt]
 
-        encodings_dict = self.tokenizer.batch_encode_plus(prompt, padding=True, return_tensors='pt')
+        encodings_dict = self.tokenizer.batch_encode_plus(
+            prompt, padding=True, return_tensors='pt')
 
         input_ids = encodings_dict['input_ids'].to(self.device)
         attention_mask = encodings_dict['attention_mask'].to(self.device)
         batch_size, input_seq_len = input_ids.shape
 
         position_ids = attention_mask.cumsum(dim=1) - 1
-        unfinished_sents = torch.ones(batch_size, dtype=torch.long, device=self.device)
+        unfinished_sents = torch.ones(
+            batch_size, dtype=torch.long, device=self.device)
 
         self.model.eval()
         with torch.no_grad():
             for step in range(max_len):
                 outputs = self.model(input_ids, attention_mask=attention_mask, position_ids=position_ids,
-                                          **model_kwargs)
+                                     **model_kwargs)
                 logits = outputs['logits']
                 past = outputs['past_key_values']
 
                 # in the first decoding step, we want to use the 'real' last position for each sentence
                 if step == 0:
                     last_non_masked_idx = torch.sum(attention_mask, dim=1) - 1
-                    next_token_logits = logits[range(batch_size), last_non_masked_idx, :]
+                    next_token_logits = logits[range(
+                        batch_size), last_non_masked_idx, :]
                 else:
                     next_token_logits = logits[:, -1, :]
 
@@ -96,17 +102,26 @@ class GPT2Generation:
                     # Temperature (higher temperature => more likely to sample low probability tokens)
                     if temperature != 1.0:
                         next_token_logits = next_token_logits / temperature
+                    # min-length processor
+                    next_token_logits = min_length_processor(
+                        min_len, self.tokenizer.eos_token_id, input_ids, next_token_logits)
                     # Top-p/top-k filtering
-                    next_token_logits = top_k_top_p_filtering(next_token_logits, top_k=top_k, top_p=top_p)
+                    next_token_logits = top_k_top_p_filtering(
+                        next_token_logits, top_k=top_k, top_p=top_p)
                     # Sample
                     probs = F.softmax(next_token_logits, dim=-1)
-                    next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
+                    next_tokens = torch.multinomial(
+                        probs, num_samples=1).squeeze(1)
                 else:
+                    # min-length processor
+                    next_token_logits = min_length_processor(
+                        min_len, self.tokenizer.eos_token_id, input_ids, next_token_logits)
                     # Greedy decoding
                     next_tokens = torch.argmax(next_token_logits, dim=-1)
 
                 # either append a padding token here if <EOS> has been seen or append next token
-                tokens_to_add = next_tokens * unfinished_sents + self.tokenizer.pad_token_id * (1 - unfinished_sents)
+                tokens_to_add = next_tokens * unfinished_sents + \
+                    self.tokenizer.pad_token_id * (1 - unfinished_sents)
 
                 # this updates which sentences have not seen an EOS token so far
                 # if one EOS token was seen the sentence is finished
@@ -118,11 +133,20 @@ class GPT2Generation:
                     break
 
                 # Update input_ids, attention_mask and position_ids
-                input_ids = torch.cat([input_ids, tokens_to_add.unsqueeze(-1)], dim=-1)
-                attention_mask = torch.cat([attention_mask, attention_mask.new_ones((batch_size, 1))], dim=1)
-                position_ids = torch.cat([position_ids, (position_ids[:, -1] + 1).unsqueeze(-1)], dim=1)
+                input_ids = torch.cat(
+                    [input_ids, tokens_to_add.unsqueeze(-1)], dim=-1)
+                attention_mask = torch.cat(
+                    [attention_mask, attention_mask.new_ones((batch_size, 1))], dim=1)
+                position_ids = torch.cat(
+                    [position_ids, (position_ids[:, -1] + 1).unsqueeze(-1)], dim=1)
 
         decoded_outputs = [self.tokenizer.decode(output, skip_special_tokens=True, clean_up_tokenization_spaces=True)
                            for output in input_ids[:, input_seq_len:]]
         return decoded_outputs
 
+
+def min_length_processor(min_length, eos_token_id, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
+    cur_len = input_ids.shape[-1]
+    if cur_len < min_length:
+        scores[:, eos_token_id] = -float("inf")
+    return scores

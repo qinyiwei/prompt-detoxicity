@@ -20,12 +20,13 @@ from modeling.modeling import GPT2Wrapper
 from utils.utils import batchify, load_cache
 
 
-
 logging.disable(logging.CRITICAL)  # Disable logging from transformers
+
 
 def _pipeline_helper(prompts: pd.Series,
                      model_name_or_path: str,
                      max_len: int,
+                     min_len: int,
                      num_samples: int,
                      out_file: Path,
                      top_p: float,
@@ -58,6 +59,7 @@ def _pipeline_helper(prompts: pd.Series,
                               do_sample=True,
                               top_p=top_p,
                               max_length=ctx_len + max_len,
+                              min_length=ctx_len + min_len,
                               return_prompt=False,
                               **generate_kwargs)
             batch = map(lambda g: g['generated_text'][len(prompt):], batch)
@@ -77,6 +79,7 @@ def _pipeline_helper(prompts: pd.Series,
 
 def ctrl(prompts: pd.Series,
          max_len: int,
+         min_len: int,
          num_samples: int,
          ctrl_code: str,
          model_name_or_path: str,
@@ -89,6 +92,7 @@ def ctrl(prompts: pd.Series,
     yield from _pipeline_helper(prompts=prompts,
                                 model_name_or_path=model_name_or_path,
                                 max_len=max_len,
+                                min_len=min_len,
                                 num_samples=num_samples,
                                 out_file=out_file,
                                 **generate_kwargs)
@@ -96,6 +100,7 @@ def ctrl(prompts: pd.Series,
 
 def _gpt2_helper(prompts: pd.Series,
                  max_len: int,
+                 min_len: int,
                  num_samples: int,
                  batch_size: int,
                  generator: GPT2Generation,
@@ -118,7 +123,8 @@ def _gpt2_helper(prompts: pd.Series,
                        dynamic_ncols=True,
                        postfix={'batch_size': batch_size}):
         # Generate
-        batch = generator.generate(prompt = prompt, max_len = max_len, **generate_kwargs)
+        batch = generator.generate(
+            prompt=prompt, max_len=max_len, min_len=min_len, **generate_kwargs)
 
         for generation in batch:
             with out_file.open('a') as f:
@@ -128,6 +134,7 @@ def _gpt2_helper(prompts: pd.Series,
 
 def gpt2(prompts: pd.Series,
          max_len: int,
+         min_len: int,
          num_samples: int,
          batch_size: int,
          model_name_or_path: str,
@@ -136,13 +143,14 @@ def gpt2(prompts: pd.Series,
          **generate_kwargs) -> Iterable[str]:
     # Setup model
     generator = GPT2Generation(
-        model_name_or_path = model_name_or_path,
-        orig_model = orig_model,
-        tokenizer_name_or_path = model_name_or_path,
+        model_name_or_path=model_name_or_path,
+        orig_model=orig_model,
+        tokenizer_name_or_path=model_name_or_path,
     )
 
     yield from _gpt2_helper(prompts=prompts,
                             max_len=max_len,
+                            min_len=min_len,
                             num_samples=num_samples,
                             batch_size=batch_size,
                             generator=generator,
@@ -151,13 +159,14 @@ def gpt2(prompts: pd.Series,
 
 
 def _gpt2_prompt_helper(prompts: pd.Series,
-                 add_params: str,
-                 max_len: int,
-                 num_samples: int,
-                 batch_size: int,
-                 generator: GPT2Generation,
-                 out_file: Path,
-                 **generate_kwargs):
+                        add_params: str,
+                        max_len: int,
+                        min_len: int,
+                        num_samples: int,
+                        batch_size: int,
+                        generator: GPT2Generation,
+                        out_file: Path,
+                        **generate_kwargs):
     # Repeat prompts
     prompts = prompts.repeat(num_samples)
 
@@ -175,7 +184,8 @@ def _gpt2_prompt_helper(prompts: pd.Series,
                        dynamic_ncols=True,
                        postfix={'batch_size': batch_size}):
         # Generate
-        batch = generator.generate(prompt = prompt, add_params = add_params, max_len = max_len, **generate_kwargs)
+        batch = generator.generate(
+            prompt=prompt, add_params=add_params, max_len=max_len, min_len=min_len, **generate_kwargs)
 
         for generation in batch:
             with out_file.open('a') as f:
@@ -184,44 +194,47 @@ def _gpt2_prompt_helper(prompts: pd.Series,
 
 
 def gpt2_prompt(prompts: pd.Series,
-         add_params: str,
-         max_len: int,
-         num_samples: int,
-         batch_size: int,
-         model_name_or_path: str,
-         orig_model: str,
-         out_file: Path,
-         tuning_type: str,
-         n_prefix: int,
-         n_class: int,
-         **generate_kwargs) -> Iterable[str]:
+                add_params: str,
+                max_len: int,
+                min_len: int,
+                num_samples: int,
+                batch_size: int,
+                model_name_or_path: str,
+                orig_model: str,
+                out_file: Path,
+                tuning_type: str,
+                n_prefix: int,
+                n_class: int,
+                **generate_kwargs) -> Iterable[str]:
     # Setup model
     generator = GPT2Generation(
-        model_name_or_path = model_name_or_path,
-        orig_model = orig_model,
-        tokenizer_name_or_path = model_name_or_path,
-        tuning_type = tuning_type, 
-        n_prefix = n_prefix, 
-        n_class = n_class,
+        model_name_or_path=model_name_or_path,
+        orig_model=orig_model,
+        tokenizer_name_or_path=model_name_or_path,
+        tuning_type=tuning_type,
+        n_prefix=n_prefix,
+        n_class=n_class,
     )
 
     yield from _gpt2_prompt_helper(prompts=prompts,
-                            add_params=add_params,
-                            max_len=max_len,
-                            num_samples=num_samples,
-                            batch_size=batch_size,
-                            generator=generator,
-                            out_file=out_file,
-                            **generate_kwargs)
+                                   add_params=add_params,
+                                   max_len=max_len,
+                                   min_len=min_len,
+                                   num_samples=num_samples,
+                                   batch_size=batch_size,
+                                   generator=generator,
+                                   out_file=out_file,
+                                   **generate_kwargs)
 
 
 def _gpt2_debias_helper(prompts: pd.Series,
-                 max_len: int,
-                 num_samples: int,
-                 batch_size: int,
-                 generator: GPT2Wrapper,
-                 out_file: Path,
-                 **generate_kwargs):
+                        max_len: int,
+                        min_len: int,
+                        num_samples: int,
+                        batch_size: int,
+                        generator: GPT2Wrapper,
+                        out_file: Path,
+                        **generate_kwargs):
     # Repeat prompts
     prompts = prompts.repeat(num_samples)
 
@@ -239,7 +252,8 @@ def _gpt2_debias_helper(prompts: pd.Series,
                        dynamic_ncols=True,
                        postfix={'batch_size': batch_size}):
         # Generate
-        batch = generator.generate_self_debiasing(input_texts = prompt, max_length = max_len, **generate_kwargs)
+        batch = generator.generate_self_debiasing(
+            input_texts=prompt, max_length=max_len, min_len=min_len ** generate_kwargs)
 
         for generation in batch:
             with out_file.open('a') as f:
@@ -248,33 +262,34 @@ def _gpt2_debias_helper(prompts: pd.Series,
 
 
 def gpt2_debias(prompts: pd.Series,
-         max_len: int,
-         num_samples: int,
-         batch_size: int,
-         model_name_or_path: str,
-         orig_model: str,
-         out_file: Path,
-         is_debias: bool,
-         tuning_type: str,
-         n_prefix: int,
-         n_class: int,
-         **generate_kwargs) -> Iterable[str]:
+                max_len: int,
+                min_len: int,
+                num_samples: int,
+                batch_size: int,
+                model_name_or_path: str,
+                orig_model: str,
+                out_file: Path,
+                is_debias: bool,
+                tuning_type: str,
+                n_prefix: int,
+                n_class: int,
+                **generate_kwargs) -> Iterable[str]:
     # Setup model
     generator = GPT2Wrapper(
-        model_name_or_path = model_name_or_path,
-        orig_model = orig_model,
-        tokenizer_name_or_path = model_name_or_path,
+        model_name_or_path=model_name_or_path,
+        orig_model=orig_model,
+        tokenizer_name_or_path=model_name_or_path,
         is_debias=is_debias,
-        tuning_type = tuning_type, 
-        n_prefix = n_prefix, 
-        n_class = n_class,
+        tuning_type=tuning_type,
+        n_prefix=n_prefix,
+        n_class=n_class,
     )
 
     yield from _gpt2_debias_helper(prompts=prompts,
-                            max_len=max_len,
-                            num_samples=num_samples,
-                            batch_size=batch_size,
-                            generator=generator,
-                            out_file=out_file,
-                            **generate_kwargs)
-
+                                   max_len=max_len,
+                                   min_len=min_len,
+                                   num_samples=num_samples,
+                                   batch_size=batch_size,
+                                   generator=generator,
+                                   out_file=out_file,
+                                   **generate_kwargs)

@@ -43,9 +43,9 @@ def main(rates: int):
     # Create output files
     output_dir = '/projects/tir4/users/yiweiq/toxicity/dataset/DExperts/datasets/openwebtext/'
     output_dir = Path(output_dir)
-    batch_size = 64
+    batch_size = 32
 
-    generations_file = output_dir / 'toxicity_gte99.txt'
+    generations_file = output_dir / 'toxicity_lte2.txt'
 
     f = open(generations_file, 'r')
     generations = [line for line in f.read().splitlines() if (
@@ -79,13 +79,12 @@ def main(rates: int):
     torch.cuda.empty_cache()
     print('Finished generation and evluation!')
 
-    sorted_gens = [x for _, x in sorted(
-        zip(SCORES, generations), reverse=True)]
+    sorted_gens = [x for _, x in sorted(zip(SCORES, generations))]
 
     # Save evaluation file
     for rate in rates:
         output_file = output_dir / \
-            'toxicity_gte99_most_toxicity_{}.txt'.format(rate)
+            'toxicity_lte2_least_toxicity_{}.txt'.format(rate)
         with open(output_file, 'w') as fo:
             for gen in sorted_gens[:int(len(generations)*rate/100)]:
                 fo.write(gen+'\n')

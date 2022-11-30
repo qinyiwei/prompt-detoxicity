@@ -17,7 +17,8 @@ TOPICS = ["computers", "legal", "military",
 @click.option('--model', required=True, help='Equivalent to `model_name_or_path` in transformers.')
 @click.option('--model-type', required=True,
               type=click.Choice(ALLOWED_MODELS))
-def main(output_dir: str, dataset_file: Optional[str], model: str, model_type: str):
+@click.option('--topics-part', required=False, multiple=True, type=str, help='')
+def main(output_dir: str, dataset_file: Optional[str], model: str, model_type: str, topics_part: str):
     f_prompts = open(dataset_file, 'r')
     srcs = [p.replace("\n", "") for p in f_prompts.readlines()]
 
@@ -30,7 +31,11 @@ def main(output_dir: str, dataset_file: Optional[str], model: str, model_type: s
         wf, fieldnames=['category', 'input_text', 'generation'])
     writer.writeheader()
 
-    for topic in TOPICS:
+    if len(topics_part) != 0:
+        topics = topics_part
+    else:
+        topics = TOPICS
+    for topic in topics:
         generations = []
         file_name = "data/topic/generations/gpt2_gpt2-large_n_500_generations_tw_topic_eval_ppl_category_{}_rerank_generations.jsonl".format(
             topic)
@@ -43,8 +48,9 @@ def main(output_dir: str, dataset_file: Optional[str], model: str, model_type: s
         num_gen_per_scr = len(generations)/len(srcs)
 
         for gen in generations:
+            input_text = srcs[int(generations.index(gen)/num_gen_per_scr)]
             writer.writerow(
-                {'category': topic, 'input_text': srcs[int(generations.index(gen)/num_gen_per_scr)], 'generation': gen})
+                {'category': topic, 'input_text': input_text, 'generation': input_text + gen})
 
 
 if __name__ == '__main__':
